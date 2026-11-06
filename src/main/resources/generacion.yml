@@ -1,0 +1,32 @@
+# Editá este archivo para configurar únicamente este proyecto.
+# Los ejemplos completos y las instrucciones de instalación están en README.md.
+
+world:
+  # El relieve y la apariencia se eligen por separado.
+  # Terrenos: overworld, large_biomes, amplified, nether, end, caves, floating_islands.
+  terrain: overworld
+  # Ambientes: overworld, nether, end.
+  environment: overworld
+  # Reglas: overworld, nether, end. Por defecto usa el mismo valor que environment.
+  # rules: overworld
+  # sea-level: 63
+  # default-block: minecraft:stone
+  # default-fluid: minecraft:water
+  # surface: minecraft:grass_block
+  # subsurface: minecraft:dirt
+
+biomes:
+  # Este ID puede cambiar antes de crear el mundo. Usá minúsculas y guiones bajos.
+  bosque_umbrio:
+    base: minecraft:dark_forest
+    surface: minecraft:grass_block
+    subsurface: minecraft:dirt
+    # Cambiá esto a false cuando tus árboles estén listos.
+    vanilla-vegetation: true
+    # colors:
+    #   foliage: '#426845'
+    # Agregá otros biomas como entradas al mismo nivel que bosque_umbrio.
+
+# /gm guardar agrega un grupo con una plantilla y un bioma.
+# Más tarde podés reunir variantes de un mismo árbol en el campo templates.
+structures: {}
