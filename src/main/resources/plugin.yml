@@ -1,8 +1,9 @@
 name: MDVDimensions
-version: '2.1.0'
+version: '2.1.1'
 main: dev.mira.worldgen.MDVDimensions
 api-version: '1.21.6'
 load: STARTUP
+softdepend: [ViaVersion]
 description: Diseñá biomas, plantillas y dimensiones desde el juego.
 commands:
   dim:

@@ -21,6 +21,7 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
     private Projects projects;
     private Menus menus;
     private RuntimePlacements placements;
+    private ViaEndSky viaEndSky;
 
     @Override
     public void onEnable() {
@@ -55,6 +56,10 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
     @EventHandler
     public void onServerLoad(ServerLoadEvent event) {
         initializeMenus();
+        if (viaEndSky == null && getServer().getPluginManager().isPluginEnabled("ViaVersion")) {
+            viaEndSky = new ViaEndSky(getLogger());
+            viaEndSky.start();
+        }
     }
 
     private void initializeMenus() {
@@ -66,6 +71,9 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
+        if (viaEndSky != null) {
+            viaEndSky.stop();
+        }
         if (placements != null) {
             placements.detach();
         }

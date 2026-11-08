@@ -4,7 +4,7 @@ Plugin para **Purpur 1.21.6** que te deja diseñar biomas, guardar construccione
 
 ## Compilar e instalar
 
-**En GitHub.** Subí al repositorio el contenido de la carpeta del proyecto, incluida `.github`. En **Actions → Compilar plugin**, elegí **Run workflow**. Cuando termine, descargá el artefacto **MDVDimensions** y extraé `MDVDimensions-2.1.0.jar`.
+**En GitHub.** Subí al repositorio el contenido de la carpeta del proyecto, incluida `.github`. En **Actions → Compilar plugin**, elegí **Run workflow**. Cuando termine, descargá el artefacto **MDVDimensions** y extraé `MDVDimensions-2.1.1.jar`.
 
 **En tu computadora.** Con JDK 21 y Maven, ejecutá este comando desde la carpeta que contiene `pom.xml`.
 
@@ -12,14 +12,18 @@ Plugin para **Purpur 1.21.6** que te deja diseñar biomas, guardar construccione
 mvn -B clean verify
 ~~~
 
-El JAR queda en `target/MDVDimensions-2.1.0.jar`. Copialo a `plugins/` y reiniciá el servidor. Los operadores tienen acceso por defecto. Para habilitar el editor a otro administrador, asignale `mdvdimensions.admin`. También se aceptan los permisos anteriores `mdvgenerator.admin` y `generamundos.admin`.
+El JAR queda en `target/MDVDimensions-2.1.1.jar`. Copialo a `plugins/` y reiniciá el servidor. Los operadores tienen acceso por defecto. Para habilitar el editor a otro administrador, asignale `mdvdimensions.admin`. También se aceptan los permisos anteriores `mdvgenerator.admin` y `generamundos.admin`.
 
 ### Si ya usabas MDVGenerator o GeneraMundos
 
 1. Apagá el servidor y hacé una copia de seguridad.
-2. Retirá los JAR de las versiones anteriores de `plugins/` y poné `MDVDimensions-2.1.0.jar`. Conservá las carpetas `plugins/MDVGenerator/` y `plugins/GeneraMundos/` que existan.
+2. Retirá los JAR de las versiones anteriores de `plugins/` y poné `MDVDimensions-2.1.1.jar`. Conservá las carpetas `plugins/MDVGenerator/` y `plugins/GeneraMundos/` que existan.
 3. Arrancá el servidor. El plugin copia los proyectos con su `generacion.yml` y sus plantillas NBT a `plugins/MDVDimensions/proyectos/`. Busca primero en MDVGenerator y después en GeneraMundos. Si un proyecto ya existe en la carpeta nueva, conserva esa copia. Las exportaciones y copias de seguridad anteriores quedan en sus carpetas originales.
 4. Abrí `/dim` y elegí el proyecto importado. Su dimensión sigue siendo `gm_<proyecto>:world` y el ZIP conserva el nombre `gm_<proyecto>.zip`. Los datapacks instalados siguen activos. Si migrás desde GeneraMundos y querés que una nueva exportación conserve los mobs que heredabas del bioma vanilla, habilitá **Mobs heredados** en ese bioma.
+
+### Cielo del End con clientes Java más nuevos
+
+Con [ViaVersion 5.12.2](https://github.com/ViaVersion/ViaVersion/releases/tag/5.12.2) instalado en el mismo Purpur, MDVDimensions conserva el cielo del End al traducir las dimensiones del plugin a Java 1.21.11. Reemplazá el JAR, reiniciá y volvé a entrar. En la consola debe aparecer **Compatibilidad con el cielo del End activada en ViaVersion**. Si la traducción ocurre en un proxy, el arreglo tiene que aplicarse allí. ViaVersion es opcional para los clientes nativos de Java 1.21.6.
 
 ## Crear y probar un mundo desde el juego
 
