@@ -1,14 +1,16 @@
-name: GeneraMundos
-version: '1.0.0'
-main: dev.mira.worldgen.GeneraMundos
+name: MDVGenerator
+version: '2.0.0'
+main: dev.mira.worldgen.MDVGenerator
 api-version: '1.21.6'
-description: Guarda construcciones y exporta dimensiones como datapacks.
+description: Diseñá biomas, plantillas y dimensiones desde el juego.
 commands:
-  gm:
+  mdv:
     description: Proyectos de generación de mundos.
-    aliases: [generamundos]
-    permission: generamundos.admin
+    aliases: [gm, mdvgenerator, generamundos]
 permissions:
-  generamundos.admin:
-    description: Permite editar, exportar e instalar proyectos de GeneraMundos.
+  mdvgenerator.admin:
+    description: Permite diseñar, exportar e instalar proyectos de MDVGenerator.
     default: op
+  generamundos.admin:
+    description: Permiso anterior compatible con MDVGenerator.
+    default: false

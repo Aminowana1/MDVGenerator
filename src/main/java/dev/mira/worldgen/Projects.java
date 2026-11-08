@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -28,11 +29,11 @@ final class Projects {
     private static final Pattern BIOME_ID = Pattern.compile("[a-z0-9][a-z0-9_-]*");
     private static final String MARKER = "generamundos.proyecto";
 
-    private final GeneraMundos plugin;
+    private final MDVGenerator plugin;
     private final Path data;
     private final Path projects;
 
-    Projects(GeneraMundos plugin) {
+    Projects(MDVGenerator plugin) {
         this.plugin = plugin;
         data = plugin.getDataFolder().toPath();
         projects = data.resolve("proyectos");
@@ -42,11 +43,53 @@ final class Projects {
         return "gm_" + id(project);
     }
 
-    private static String id(String value) {
+    static String id(String value) {
         if (!ID.matcher(value).matches()) {
             throw new IllegalArgumentException("Usá un ID de hasta 32 caracteres: letras minúsculas, números y guion bajo. Empezá con una letra.");
         }
         return value;
+    }
+
+    int migrateLegacy() throws IOException {
+        Path legacy = data.resolveSibling("GeneraMundos");
+        Path oldProjects = legacy.resolve("proyectos");
+        if (!Files.isDirectory(oldProjects)) {
+            return 0;
+        }
+        Files.createDirectories(projects);
+        int imported = 0;
+        try (var entries = Files.list(oldProjects)) {
+            for (Path source : entries.filter(Files::isDirectory).toList()) {
+                String name = source.getFileName().toString();
+                if (!ID.matcher(name).matches() || !Files.isRegularFile(source.resolve("generacion.yml"))) {
+                    continue;
+                }
+                Path destination = projects.resolve(name);
+                if (Files.exists(destination)) {
+                    continue;
+                }
+                Path staging = Files.createTempDirectory(projects, ".migracion-");
+                try {
+                    try (var files = Files.walk(source)) {
+                        for (Path file : files.sorted().toList()) {
+                            Path target = staging.resolve(source.relativize(file));
+                            if (Files.isDirectory(file) && !Files.isSymbolicLink(file)) {
+                                Files.createDirectories(target);
+                            } else if (Files.isRegularFile(file) && !Files.isSymbolicLink(file)) {
+                                Files.copy(file, target);
+                            }
+                        }
+                    }
+                    Files.move(staging, destination);
+                    imported++;
+                } finally {
+                    if (Files.exists(staging)) {
+                        clean(staging);
+                    }
+                }
+            }
+        }
+        return imported;
     }
 
     List<String> list() throws IOException {
@@ -93,6 +136,30 @@ final class Projects {
         return config;
     }
 
+    YamlConfiguration readConfig(String name) throws IOException {
+        return read(project(name));
+    }
+
+    void editConfig(String name, Consumer<YamlConfiguration> update) throws IOException {
+        Path path = project(name);
+        var config = read(path);
+        update.accept(config);
+        writeConfig(path, config);
+    }
+
+    List<String> listTemplates(String name) throws IOException {
+        Path folder = project(name).resolve("plantillas");
+        if (!Files.isDirectory(folder)) {
+            return List.of();
+        }
+        try (var files = Files.list(folder)) {
+            return files.filter(Files::isRegularFile).map(file -> file.getFileName().toString())
+                    .filter(file -> file.endsWith(".nbt"))
+                    .map(file -> file.substring(0, file.length() - 4))
+                    .filter(nameOnly -> ID.matcher(nameOnly).matches()).sorted().toList();
+        }
+    }
+
     void capture(Capture capture, Player player, String project, String name, String biome,
                  String kind, boolean entities) throws IOException {
         Path path = project(project);
@@ -104,6 +171,25 @@ final class Projects {
 
     void recapture(Capture capture, Player player, String project, String name, boolean entities) throws IOException {
         capture.save(player, existingTemplate(project(project), name), entities);
+    }
+
+    void captureTemplate(Capture capture, Player player, String project, String name, String kind,
+                         boolean entities) throws IOException {
+        Path path = project(project);
+        var config = read(path);
+        Path destination = registerTemplate(path, config, name, kind);
+        capture.save(player, destination, entities);
+        saveRegistration(path, config, destination);
+    }
+
+    void copyTemplate(String origin, String name, String destination) throws IOException {
+        Path from = project(origin);
+        Path to = project(destination);
+        Path source = existingTemplate(from, name);
+        var config = read(to);
+        Path target = registerTemplate(to, config, name, templateKind(read(from), name));
+        copyReplacing(source, target);
+        saveRegistration(to, config, target);
     }
 
     void copy(String origin, String name, String destination, String biome) throws IOException {
@@ -128,7 +214,11 @@ final class Projects {
         return path;
     }
 
-    private static String templateKind(YamlConfiguration config, String name) {
+    static String templateKind(YamlConfiguration config, String name) {
+        String catalog = config.getString("catalog." + name + ".kind");
+        if (catalog != null) {
+            return catalog;
+        }
         var groups = config.getConfigurationSection("structures");
         if (groups != null) {
             for (String id : groups.getKeys(false)) {
@@ -149,29 +239,36 @@ final class Projects {
 
     private static Path register(Path project, YamlConfiguration config, String name, String biome,
                                  String kind) throws IOException {
-        Path path = template(project, name);
-        String key = "structures." + name;
-        if (Files.exists(path) || config.contains(key)) {
-            throw new IllegalArgumentException("Ya existe esa plantilla. Usá /gm actualizar para volver a capturarla.");
-        }
         if (!BIOME_ID.matcher(biome).matches() || !config.isConfigurationSection("biomes." + biome)) {
             throw new IllegalArgumentException("El bioma local «" + biome + "» no existe en generacion.yml.");
         }
-        Files.createDirectories(path.getParent());
+        String key = "structures." + id(name);
+        if (config.contains(key)) {
+            throw new IllegalArgumentException("Ya existe un grupo con ese ID.");
+        }
+        Path path = registerTemplate(project, config, name, kind);
         config.set(key + ".kind", kind);
         config.set(key + ".biomes", List.of(biome));
         return path;
     }
 
+    private static Path registerTemplate(Path project, YamlConfiguration config, String name, String kind)
+            throws IOException {
+        if (!List.of("tree", "building", "other").contains(kind)) {
+            throw new IllegalArgumentException("Categoría de plantilla desconocida.");
+        }
+        Path path = template(project, name);
+        if (Files.exists(path)) {
+            throw new IllegalArgumentException("Ya existe esa plantilla. Usá /mdv actualizar para volver a capturarla.");
+        }
+        Files.createDirectories(path.getParent());
+        config.set("catalog." + name + ".kind", kind);
+        return path;
+    }
+
     private static void saveRegistration(Path project, YamlConfiguration config, Path newTemplate) throws IOException {
         try {
-            Path temporary = Files.createTempFile(project, ".config-", ".tmp");
-            try {
-                Files.writeString(temporary, config.saveToString(), StandardCharsets.UTF_8);
-                replace(temporary, project.resolve("generacion.yml"));
-            } finally {
-                Files.deleteIfExists(temporary);
-            }
+            writeConfig(project, config);
         } catch (IOException ex) {
             try {
                 Files.deleteIfExists(newTemplate);
@@ -179,6 +276,16 @@ final class Projects {
                 ex.addSuppressed(cleanup);
             }
             throw ex;
+        }
+    }
+
+    private static void writeConfig(Path project, YamlConfiguration config) throws IOException {
+        Path temporary = Files.createTempFile(project, ".config-", ".tmp");
+        try {
+            Files.writeString(temporary, config.saveToString(), StandardCharsets.UTF_8);
+            replace(temporary, project.resolve("generacion.yml"));
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 
@@ -235,7 +342,7 @@ final class Projects {
                 {
                   "pack": {
                     "pack_format": 80,
-                    "description": "GeneraMundos - %s"
+                    "description": "MDVGenerator - %s"
                   }
                 }
                 """.formatted(project), StandardCharsets.UTF_8);
