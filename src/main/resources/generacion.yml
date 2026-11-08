@@ -23,13 +23,13 @@ biomes:
     subsurface: minecraft:dirt
     # Cambiá esto a false cuando tus árboles estén listos.
     vanilla-vegetation: true
-    # Configurá mobs naturales desde Biomas → Mobs naturales en /mdv.
+    # Configurá mobs naturales desde Biomas → Mobs naturales en /dim.
     vanilla-mobs: false
     # colors:
     #   foliage: '#426845'
     # Agregá otros biomas como entradas al mismo nivel que bosque_umbrio.
 
-# /mdv guarda plantillas y las asigna a biomas desde Catálogo.
+# /dim guarda plantillas y las asigna a biomas desde Catálogo.
 # Más tarde podés reunir variantes de un mismo árbol en el campo templates.
 structures: {}
 vegetation: {}

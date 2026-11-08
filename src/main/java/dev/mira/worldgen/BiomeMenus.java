@@ -1,9 +1,7 @@
 package dev.mira.worldgen;
 
-import io.papermc.paper.registry.RegistryAccess;
-import io.papermc.paper.registry.RegistryKey;
+import com.google.gson.JsonObject;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.EntityType;
@@ -12,6 +10,7 @@ import org.bukkit.entity.Player;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -24,24 +23,29 @@ import java.util.function.IntFunction;
 final class BiomeMenus {
     private static final int PAGE_SIZE = 45;
     private static final List<Option> ENVIRONMENTS = List.of(
-            new Option("overworld", "Overworld", Material.GRASS_BLOCK),
-            new Option("nether", "Nether", Material.NETHERRACK),
-            new Option("end", "End", Material.END_STONE));
+            new Option("overworld", "Overworld", Material.GRASS_BLOCK, "Cielo natural y ciclo de día y noche"),
+            new Option("nether", "Nether", Material.NETHERRACK, "Niebla y luz ambiental del Nether", "Sin sol ni luna"),
+            new Option("end", "End", Material.END_STONE, "Cielo y luz ambiental del End", "Sin ciclo visible de día y noche"));
+    private static final List<Option> RULES = List.of(
+            new Option("overworld", "Overworld", Material.RED_BED, "Las camas funcionan y el agua no se evapora"),
+            new Option("nether", "Nether", Material.RESPAWN_ANCHOR, "Funcionan las anclas y el agua se evapora", "La lava fluye más rápido"),
+            new Option("end", "End", Material.END_STONE, "Las camas y las anclas explotan", "El agua no se evapora"),
+            new Option("", "Según el ambiente", Material.COMPASS, "Usa las reglas del ambiente visual elegido"));
     private static final List<Option> TERRAINS = List.of(
-            new Option("overworld", "Overworld", Material.GRASS_BLOCK),
-            new Option("large_biomes", "Biomas amplios", Material.MAP),
-            new Option("amplified", "Relieve amplificado", Material.STONE),
-            new Option("nether", "Cavernas del Nether", Material.NETHERRACK),
-            new Option("end", "Islas del End", Material.END_STONE),
-            new Option("caves", "Cavernas", Material.DEEPSLATE),
-            new Option("floating_islands", "Islas flotantes", Material.PHANTOM_MEMBRANE));
+            new Option("overworld", "Overworld", Material.GRASS_BLOCK, "Continentes, océanos, montañas y cuevas"),
+            new Option("large_biomes", "Biomas amplios", Material.MAP, "Relieve del Overworld", "Regiones de clima más extensas"),
+            new Option("amplified", "Relieve amplificado", Material.STONE, "Montañas altas y desniveles más marcados"),
+            new Option("nether", "Cavernas del Nether", Material.NETHERRACK, "Grandes cavernas con techo y mares de lava"),
+            new Option("end", "Islas del End", Material.END_STONE, "Islas de piedra del End sobre el vacío"),
+            new Option("caves", "Cavernas", Material.DEEPSLATE, "Perfil de cavernas con techo de piedra"),
+            new Option("floating_islands", "Islas flotantes", Material.PHANTOM_MEMBRANE, "Terreno suspendido y vacío debajo"));
     private static final List<Option> RELIEF = List.of(
-            new Option("any", "Cualquier relieve", Material.MAP),
-            new Option("mountains", "Montañas", Material.SNOW_BLOCK),
-            new Option("hills", "Colinas", Material.STONE),
-            new Option("plains", "Llanuras", Material.GRASS_BLOCK),
-            new Option("coast", "Costas", Material.SAND),
-            new Option("ocean", "Océanos", Material.KELP));
+            new Option("any", "Cualquier relieve", Material.MAP, "Sin preferencia por una forma del terreno"),
+            new Option("mountains", "Montañas", Material.SNOW_BLOCK, "Prefiere crestas altas y terreno abrupto"),
+            new Option("hills", "Colinas", Material.STONE, "Prefiere terreno interior ondulado"),
+            new Option("plains", "Llanuras", Material.GRASS_BLOCK, "Prefiere zonas interiores más planas"),
+            new Option("coast", "Costas", Material.SAND, "Prefiere la transición entre tierra y océano"),
+            new Option("ocean", "Océanos", Material.KELP, "Prefiere zonas marinas alejadas del interior"));
     private static final List<Option> CLIMATE = List.of(
             new Option("temperature", "Temperatura", Material.BLAZE_POWDER),
             new Option("humidity", "Humedad", Material.WATER_BUCKET),
@@ -86,7 +90,8 @@ final class BiomeMenus {
             .sorted(Comparator.comparing(Material::name)).toList();
 
     private final Menus menus;
-    private List<String> bases;
+    private final BiomeEssences essences = new BiomeEssences();
+    private final Map<String, JsonObject> vanillaDefinitions = new HashMap<>();
 
     BiomeMenus(Menus menus) {
         this.menus = menus;
@@ -106,8 +111,18 @@ final class BiomeMenus {
         for (int index = first; index < Math.min(first + PAGE_SIZE, ids.size()); index++) {
             String id = ids.get(index);
             String path = "biomes." + id;
-            view.button(index - first, Material.GRASS_BLOCK, display(config, path, id),
-                    () -> biome(player, project, id), "ID · " + id, "Base · " + value(config, path + ".base", "Según el terreno"));
+            var essence = essence(config, path);
+            List<String> lore = new ArrayList<>(List.of("ID · " + id, "Base · " + baseLabel(config, path, essence),
+                    "Relieve · " + optionLabel(RELIEF, config.getString(path + ".relief", "any")),
+                    climateLine(config, path, essence), precipitationLine(config, path, essence),
+                    layerSummary(config, path, "surface", "Superficie", 1),
+                    layerSummary(config, path, "subsurface", "Subsuelo", 2),
+                    "Vegetación base · " + enabled(config.getBoolean(path + ".vanilla-vegetation", true)),
+                    mobSummary(config, path)));
+            String[] colors = colorSummary(config, path);
+            lore.add(colors.length == 1 ? colors[0] : "Colores propios · " + colors.length);
+            view.button(index - first, essence == null ? Material.GRASS_BLOCK : essence.icon(), display(config, path, id),
+                    () -> biome(player, project, id), lore.toArray(String[]::new));
         }
         view.button(48, Material.EMERALD, "Crear bioma", () -> newBiome(player, project));
         view.button(49, Material.ARROW, "Volver al proyecto", () -> menus.project(player, project));
@@ -148,22 +163,30 @@ final class BiomeMenus {
         view.button(10, Material.NAME_TAG, "Nombre en el menú", () -> editInput(player, project, config, path + ".name",
                 "Nombre del bioma en los menús, hasta 48 caracteres, o heredar.", back, BiomeMenus::name),
                 display(config, path, biome), "El ID del bioma sigue siendo " + biome);
-        view.button(12, Material.OAK_SAPLING, "Bioma base", () -> chooseBase(player, back,
-                selected -> set(project, path + ".base", selected, back)), value(config, path + ".base", "Según el terreno"));
+        var essence = essence(config, path);
+        view.button(12, essence == null ? Material.OAK_SAPLING : essence.icon(), "Bioma base · esencia", () -> chooseBase(player, back,
+                selected -> set(project, path + ".base", selected, back)), essence == null
+                ? new String[]{"Base · " + baseLabel(config, path, null)}
+                : new String[]{"Actual · " + essence.name(), essence.description(), "Suelo típico · " + essence.substrate(),
+                    "Vegetación · " + essence.vegetation(), "ID · " + essence.id()});
         view.button(14, Material.GRASS_BLOCK, "Capas del terreno", () -> layers(player, project, path, back),
-                "Elegí bloques, porcentajes y profundidad");
+                layerSummary(config, path, "surface", "Superficie", 1), layerSummary(config, path, "subsurface", "Subsuelo", 2));
+        String relief = config.getString(path + ".relief", "any");
         view.button(16, Material.SNOW_BLOCK, "Relieve preferido", () -> chooseOption(player, project, path + ".relief",
-                "Relieve preferido", RELIEF, back), optionLabel(RELIEF, config.getString(path + ".relief", "any")),
-                "Ubica el bioma según el terreno del mundo");
-        view.button(28, Material.SUNFLOWER, "Clima y ubicación", () -> climate(player, project, path, back));
-        view.button(30, Material.PAINTING, "Colores", () -> colors(player, project, path, back));
-        view.button(32, Material.COW_SPAWN_EGG, "Mobs naturales", () -> mobs(player, project, path, back));
-        view.button(34, Material.STRUCTURE_BLOCK, "Árboles y estructuras", () -> menus.catalog(player, project, biome));
+                "Relieve preferido", RELIEF, back), optionLabel(RELIEF, relief), optionDescription(RELIEF, relief),
+                "Para Overworld, biomas amplios o amplificado");
+        view.button(28, Material.SUNFLOWER, "Clima y ubicación", () -> climate(player, project, path, back),
+                climateLine(config, path, essence), precipitationLine(config, path, essence), placementLine(config, path));
+        view.button(30, Material.PAINTING, "Colores", () -> colors(player, project, path, back), colorSummary(config, path));
+        view.button(32, Material.COW_SPAWN_EGG, "Mobs naturales", () -> mobs(player, project, path, back),
+                mobSummary(config, path), "Categorías y grupos de aparición");
+        view.button(34, Material.STRUCTURE_BLOCK, "Árboles y estructuras", () -> menus.catalog(player, project, biome),
+                catalogSummary(config, project, biome));
         boolean vegetation = config.getBoolean(path + ".vanilla-vegetation", true);
         view.button(39, Material.FERN, "Vegetación del bioma base", () -> set(project, path + ".vanilla-vegetation", !vegetation, back),
-                enabled(vegetation), "Clic para cambiar");
+                enabled(vegetation), vegetation && essence != null ? essence.vegetation() : "Clic para cambiar");
         view.button(41, Material.WRITABLE_BOOK, "Datos avanzados del bioma", () -> menus.raw(player, project, path + ".data",
-                "Datos avanzados del bioma", back), "Campos nativos de Minecraft");
+                "Datos avanzados del bioma", back), sectionSummary(config, path + ".data"), "Campos nativos de Minecraft");
         view.button(49, Material.ARROW, "Volver a biomas", () -> list(player, project));
         view.open();
     }
@@ -175,22 +198,26 @@ final class BiomeMenus {
         String terrain = config.getString("world.terrain", "overworld");
         String environment = config.getString("world.environment", "overworld");
         view.button(10, Material.MAP, "Terreno base", () -> chooseOption(player, project, "world.terrain", "Terreno base", TERRAINS, back),
-                optionLabel(TERRAINS, terrain), "La forma del mundo al generar chunks");
+                optionLabel(TERRAINS, terrain), optionDescription(TERRAINS, terrain), "ID · " + terrain);
         view.button(12, Material.ENDER_EYE, "Ambiente visual", () -> chooseOption(player, project, "world.environment",
-                "Ambiente visual", ENVIRONMENTS, back), optionLabel(ENVIRONMENTS, environment), "Cielo e iluminación");
-        view.button(14, Material.REPEATER, "Reglas de dimensión", () -> dimension(player, project), "Camas, agua, anclas y otras reglas");
+                "Ambiente visual", ENVIRONMENTS, back), optionLabel(ENVIRONMENTS, environment), optionDescription(ENVIRONMENTS, environment));
+        String rules = config.getString("world.rules", "");
+        view.button(14, Material.REPEATER, "Reglas de dimensión", () -> dimension(player, project),
+                rules.isEmpty() ? "Heredadas de " + optionLabel(ENVIRONMENTS, environment) : optionLabel(RULES, rules),
+                sectionSummary(config, "world.dimension-type"), "Camas, agua, anclas y otras reglas");
         view.button(16, Material.WATER_BUCKET, "Nivel del mar", () -> editInput(player, project, config, "world.sea-level",
                 "Altura del mar. Escribí un entero entre -2032 y 2031, o heredar.", back, integer(-2032, 2031)),
-                value(config, "world.sea-level", "Según el terreno"));
+                terrainValue(config, terrain, "sea-level", "sea_level", null));
         view.button(28, Material.STONE, "Bloque base", () -> chooseBlock(player, "Bloque base", BLOCKS, back,
                 material -> set(project, "world.default-block", material.getKey().toString(), back),
-                () -> set(project, "world.default-block", null, back)), value(config, "world.default-block", "Según el terreno"));
+                () -> set(project, "world.default-block", null, back)), terrainValue(config, terrain, "default-block", "default_block", "Name"));
         view.button(30, Material.BUCKET, "Fluido base", () -> chooseFluid(player, project, back),
-                value(config, "world.default-fluid", "Según el terreno"));
+                terrainValue(config, terrain, "default-fluid", "default_fluid", "Name"));
         view.button(32, Material.GRASS_BLOCK, "Capas generales", () -> layers(player, project, "world", back),
+                layerSummary(config, "world", "surface", "Superficie", 1), layerSummary(config, "world", "subsurface", "Subsuelo", 2),
                 "Se usan si el bioma no define sus capas");
         view.button(34, Material.WRITABLE_BOOK, "Generador avanzado", () -> menus.raw(player, project, "world.noise-settings",
-                "Generador avanzado", back), "Campos nativos del generador de Minecraft");
+                "Generador avanzado", back), sectionSummary(config, "world.noise-settings"), "Campos nativos del generador de Minecraft");
         view.button(49, Material.ARROW, "Volver al proyecto", () -> menus.project(player, project));
         view.open();
     }
@@ -200,20 +227,32 @@ final class BiomeMenus {
         String path = "world.dimension-type";
         Menus.Action back = () -> dimension(player, project);
         var view = menus.menu(player, "Reglas de dimensión");
-        List<Option> choices = new ArrayList<>(ENVIRONMENTS);
-        choices.add(new Option("", "Según el ambiente", Material.COMPASS));
-        view.button(10, Material.REPEATER, "Reglas base", () -> chooseOption(player, project, "world.rules", "Reglas base", choices, back),
-                optionLabel(choices, config.getString("world.rules", "")));
-        toggle(view, 12, project, config, path + ".ultrawarm", "Evaporar agua y lava rápida", Material.LAVA_BUCKET, back);
-        toggle(view, 14, project, config, path + ".bed_works", "Camas habilitadas", Material.RED_BED, back);
-        toggle(view, 16, project, config, path + ".respawn_anchor_works", "Anclas habilitadas", Material.RESPAWN_ANCHOR, back);
-        toggle(view, 28, project, config, path + ".piglin_safe", "Piglins a salvo de zombificación", Material.GOLD_INGOT, back);
-        toggle(view, 30, project, config, path + ".has_raids", "Incursiones habilitadas", Material.CROSSBOW, back);
+        String rules = config.getString("world.rules", "");
+        String rulesPreset = rules.isEmpty() ? config.getString("world.environment", "overworld") : rules;
+        String presetFile = switch (rulesPreset) {
+            case "nether" -> "the_nether";
+            case "end" -> "the_end";
+            default -> "overworld";
+        };
+        JsonObject defaultRules = baseline("dimension_type/" + presetFile);
+        view.button(10, Material.REPEATER, "Reglas base", () -> chooseOption(player, project, "world.rules", "Reglas base", RULES, back),
+                rules.isEmpty() ? "Heredadas de " + optionLabel(RULES, rulesPreset) : optionLabel(RULES, rules),
+                optionDescription(RULES, rulesPreset));
+        toggle(view, 12, project, config, path + ".ultrawarm", "Evaporar agua y lava rápida", Material.LAVA_BUCKET, back,
+                defaultRules.get("ultrawarm").getAsBoolean());
+        toggle(view, 14, project, config, path + ".bed_works", "Camas habilitadas", Material.RED_BED, back,
+                defaultRules.get("bed_works").getAsBoolean());
+        toggle(view, 16, project, config, path + ".respawn_anchor_works", "Anclas habilitadas", Material.RESPAWN_ANCHOR, back,
+                defaultRules.get("respawn_anchor_works").getAsBoolean());
+        toggle(view, 28, project, config, path + ".piglin_safe", "Piglins a salvo de zombificación", Material.GOLD_INGOT, back,
+                defaultRules.get("piglin_safe").getAsBoolean());
+        toggle(view, 30, project, config, path + ".has_raids", "Incursiones habilitadas", Material.CROSSBOW, back,
+                defaultRules.get("has_raids").getAsBoolean());
         view.button(32, Material.COMPASS, "Escala de coordenadas", () -> editInput(player, project, config, path + ".coordinate_scale",
                 "Escala de coordenadas entre 0,00001 y 30000000, o heredar.", back, decimal(0.00001, 30000000)),
-                value(config, path + ".coordinate_scale", "Según las reglas"));
+                value(config, path + ".coordinate_scale", "Heredada · " + BiomeEssences.number(defaultRules.get("coordinate_scale").getAsDouble())));
         view.button(34, Material.WRITABLE_BOOK, "Dimensión avanzada", () -> menus.raw(player, project, path,
-                "Dimensión avanzada", back));
+                "Dimensión avanzada", back), sectionSummary(config, path));
         view.button(49, Material.ARROW, "Volver al mundo", () -> world(player, project));
         view.open();
     }
@@ -222,15 +261,20 @@ final class BiomeMenus {
         var config = menus.projects.readConfig(project);
         Menus.Action back = () -> climate(player, project, path, biomeMenu);
         var view = menus.menu(player, "Clima del bioma");
+        var essence = essence(config, path);
         view.button(11, Material.BLAZE_POWDER, "Temperatura local", () -> editInput(player, project, config, path + ".temperature",
                 "Temperatura del bioma entre -2 y 2, o heredar.", back, decimal(-2, 2)),
-                value(config, path + ".temperature", "Según el bioma base"));
+                climateValue(config, path, "temperature", essence == null ? null : essence.temperature()),
+                "Modifica las condiciones locales");
         view.button(13, Material.WATER_BUCKET, "Humedad local", () -> editInput(player, project, config, path + ".downfall",
                 "Humedad del bioma entre 0 y 1, o heredar.", back, decimal(0, 1)),
-                value(config, path + ".downfall", "Según el bioma base"));
-        toggle(view, 15, project, config, path + ".precipitation", "Lluvia o nieve", Material.SNOWBALL, back);
+                climateValue(config, path, "downfall", essence == null ? null : essence.humidity()),
+                "Modifica la humedad local");
+        Object basePrecipitation = config.get(path + ".data.has_precipitation", essence == null ? null : essence.precipitation());
+        toggle(view, 15, project, config, path + ".precipitation", "Lluvia o nieve", Material.SNOWBALL, back,
+                basePrecipitation instanceof Boolean flag ? flag : null);
         view.button(31, Material.COMPASS, "Ubicación en el generador", () -> climatePlacement(player, project, path, back),
-                "Ajustá los rangos que el generador usa para ubicar este bioma");
+                placementLine(config, path), "Ajustá los rangos del mapa climático");
         view.button(49, Material.ARROW, "Volver al bioma", biomeMenu);
         view.open();
     }
@@ -246,7 +290,7 @@ final class BiomeMenus {
             String prompt = offset ? "Desplazamiento de 0 a 1, o heredar."
                     : option.label() + " de -2 a 2. Escribí un valor, un intervalo como -0,5 0,5, o heredar.";
             view.button(10 + index, option.icon(), option.label(), () -> editInput(player, project, config, key, prompt, back,
-                    offset ? decimal(0, 1) : BiomeMenus::climateRange), value(config, key, "Automático"));
+                    offset ? decimal(0, 1) : BiomeMenus::climateRange), climatePlacementValue(config.get(key)));
         }
         view.button(49, Material.ARROW, "Volver al clima", climateMenu);
         view.open();
@@ -256,12 +300,18 @@ final class BiomeMenus {
         var config = menus.projects.readConfig(project);
         Menus.Action back = () -> colors(player, project, path, biomeMenu);
         var view = menus.menu(player, "Colores del bioma");
+        var essence = essence(config, path);
         for (int index = 0; index < COLORS.size(); index++) {
             Option option = COLORS.get(index);
             String key = path + ".colors." + option.id();
+            String property = option.id().replace('-', '_') + "_color";
+            Object inherited = config.isConfigurationSection(path + ".data.effects")
+                    ? config.get(path + ".data.effects." + property)
+                    : (essence == null ? null : essence.colors().get(property));
             view.button(11 + index, option.icon(), option.label(), () -> editInput(player, project, config, key,
                     "Escribí un color como #7457ac, o heredar.", back, BiomeMenus::color),
-                    value(config, key, "Según el bioma base"));
+                    config.contains(key) ? "Actual · " + displayColor(config.get(key))
+                            : "Heredado · " + displayColor(inherited));
         }
         view.button(49, Material.ARROW, "Volver al bioma", biomeMenu);
         view.open();
@@ -271,25 +321,36 @@ final class BiomeMenus {
         var config = menus.projects.readConfig(project);
         Menus.Action back = () -> layers(player, project, path, parent);
         var view = menus.menu(player, "Capas del terreno");
-        layerButton(view, 11, player, project, config, path + ".surface", "Superficie", Material.GRASS_BLOCK, back);
-        layerButton(view, 15, player, project, config, path + ".subsurface", "Subsuelo", Material.DIRT, back);
+        layerButton(view, 11, player, project, config, path, "surface", "Superficie", Material.GRASS_BLOCK, back);
+        layerButton(view, 15, player, project, config, path, "subsurface", "Subsuelo", Material.DIRT, back);
         view.button(29, Material.SNOW, "Grosor de la superficie", () -> editInput(player, project, config, path + ".surface-depth",
                 "Capas de superficie entre 1 y 16, o heredar.", back, integer(1, 16)),
-                value(config, path + ".surface-depth", "1 bloque"));
+                "Actual · " + layerDepth(config, path, "surface", 1) + " bloque(s)");
         view.button(33, Material.DEEPSLATE, "Grosor del subsuelo", () -> editInput(player, project, config, path + ".subsurface-depth",
                 "Capas debajo de la superficie entre 0 y 64, o heredar.", back, integer(0, 64)),
-                value(config, path + ".subsurface-depth", "2 bloques"));
+                "Actual · " + layerDepth(config, path, "subsurface", 2) + " bloque(s)");
         view.button(49, Material.ARROW, "Volver", parent);
         view.open();
     }
 
     private void layerButton(Menus.View view, int slot, Player player, String project, YamlConfiguration config,
-                             String path, String label, Material icon, Menus.Action back) {
+                             String owner, String key, String label, Material icon, Menus.Action back) {
+        String path = owner + "." + key;
         Map<String, Integer> current = readPalette(config, path);
+        Map<String, Integer> effective = effectivePalette(config, owner, key);
+        List<String> lore = new ArrayList<>();
+        if (current.isEmpty()) {
+            lore.add(effective.isEmpty() ? "Reglas del generador" : "Heredada de las capas generales");
+        }
+        effective.entrySet().stream().limit(6)
+                .forEach(block -> lore.add(block.getKey() + " · " + block.getValue() + "%"));
+        if (effective.size() > 6) {
+            lore.add("+" + (effective.size() - 6) + " bloque(s)");
+        }
+        lore.add("Abrí la paleta para editar los bloques");
         view.button(slot, icon, label,
                 () -> palette(player, project, path, label, new Palette(current, new LinkedHashMap<>(current)), 0, back),
-                current.isEmpty() ? "Heredada" : current.size() + " bloque(s) · " + paletteTotal(current) + "%",
-                "Abrí la paleta para combinar bloques");
+                lore.toArray(String[]::new));
     }
 
     private void palette(Player player, String project, String path, String title, Palette draft,
@@ -309,14 +370,15 @@ final class BiomeMenus {
                 block -> palettePercent(player, block.getKey().getKey(), draft, back), null),
                 "Buscá el bloque y asignale un porcentaje");
         int total = paletteTotal(draft.blocks());
-        boolean valid = draft.blocks().isEmpty() || total == 100;
+        boolean valid = draft.blocks().isEmpty() || (total == 100 && draft.blocks().values().stream()
+                .allMatch(share -> share >= 1 && share <= 100));
         view.button(48, Material.BUCKET, "Heredar capa", () -> {
             draft.blocks().clear();
             back.run();
         }, "Vacía el borrador. Guardá para aplicar el cambio.");
         view.button(49, valid ? Material.LIME_DYE : Material.RED_DYE, "Guardar paleta", () -> {
             if (!valid) {
-                throw new IllegalArgumentException("Los porcentajes tienen que sumar 100%. El borrador suma " + total + "%.");
+                throw new IllegalArgumentException("Cada bloque necesita entre 1 y 100%. El total debe ser 100% y ahora suma " + total + "%.");
             }
             menus.projects.editConfig(project, config -> {
                 requireBiome(config, path);
@@ -479,22 +541,9 @@ final class BiomeMenus {
                 type -> spawnIcon(type.getKey().getKey()), back, pick);
     }
 
-    private List<String> biomeBases() {
-        if (bases == null) {
-            bases = RegistryAccess.registryAccess().getRegistry(RegistryKey.BIOME).keyStream()
-                    .filter(key -> key.getNamespace().equals("minecraft"))
-                    .filter(key -> BiomeMenus.class.getResource(biomeResource(key.getKey())) != null)
-                    .map(NamespacedKey::toString).sorted().toList();
-        }
-        return bases;
-    }
-
-    private static String biomeResource(String name) {
-        return "/worldgen/vanilla/worldgen/biome/" + name + ".json";
-    }
-
     private void chooseBase(Player player, Menus.Action back, Menus.Choice<String> pick) throws Exception {
-        menus.choose(player, "Elegir bioma base", biomeBases(), Function.identity(), ignored -> Material.GRASS_BLOCK, back, pick);
+        menus.choose(player, "Esencias · bioma base", essences.entries(), BiomeEssences.Essence::name,
+                BiomeEssences.Essence::icon, back, essence -> pick.select(essence.id()), BiomeEssences.Essence::lore);
     }
 
     private void chooseFluid(Player player, String project, Menus.Action back) throws Exception {
@@ -508,7 +557,7 @@ final class BiomeMenus {
     private void chooseOption(Player player, String project, String path, String title, List<Option> options,
                               Menus.Action back) throws Exception {
         menus.choose(player, title, options, Option::label, Option::icon, back,
-                option -> set(project, path, option.id().isEmpty() ? null : option.id(), back));
+                option -> set(project, path, option.id().isEmpty() ? null : option.id(), back), Option::lore);
     }
 
     private void chooseBlock(Player player, String title, List<Material> blocks, Menus.Action back,
@@ -524,7 +573,8 @@ final class BiomeMenus {
                     } else {
                         pick.select(material);
                     }
-                });
+                }, material -> material.isAir() ? List.of("Usá el bloque base del terreno")
+                        : List.of("ID · " + material.getKey(), "Clic para elegir este bloque"));
     }
 
     private void editInput(Player player, String project, YamlConfiguration config, String path, String prompt,
@@ -537,11 +587,12 @@ final class BiomeMenus {
     }
 
     private void toggle(Menus.View view, int slot, String project, YamlConfiguration config, String path,
-                        String label, Material icon, Menus.Action back) {
+                        String label, Material icon, Menus.Action back, Boolean inherited) {
         Object current = config.get(path);
         Boolean next = current == null ? Boolean.TRUE : Boolean.TRUE.equals(current) ? Boolean.FALSE : null;
         view.button(slot, icon, label, () -> set(project, path, next, back),
-                current instanceof Boolean active ? enabled(active) : "Heredado",
+                current instanceof Boolean active ? enabled(active)
+                        : inherited == null ? "Heredado" : "Heredado · " + enabled(inherited),
                 "Clic para alternar entre sí, no y heredado");
     }
 
@@ -602,6 +653,175 @@ final class BiomeMenus {
         return options.stream().filter(option -> option.id().equals(id)).map(Option::label).findFirst().orElse(id);
     }
 
+    private static String optionDescription(List<Option> options, String id) {
+        return options.stream().filter(option -> option.id().equals(id)).flatMap(option -> option.description().stream())
+                .findFirst().orElse("Revisá este perfil");
+    }
+
+    private BiomeEssences.Essence essence(YamlConfiguration config, String path) {
+        return essences.get(baseId(config, path));
+    }
+
+    private static String baseLabel(YamlConfiguration config, String path, BiomeEssences.Essence essence) {
+        return essence == null ? baseId(config, path) : essence.name();
+    }
+
+    private static String baseId(YamlConfiguration config, String path) {
+        String fallback = switch (config.getString("world.terrain", "overworld")) {
+            case "nether" -> "minecraft:nether_wastes";
+            case "end" -> "minecraft:end_highlands";
+            default -> "minecraft:plains";
+        };
+        return config.getString(path + ".base", fallback);
+    }
+
+    private static String climateLine(YamlConfiguration config, String path, BiomeEssences.Essence essence) {
+        Object temperature = biomeValue(config, path, "temperature", "temperature", essence == null ? null : essence.temperature());
+        Object humidity = biomeValue(config, path, "downfall", "downfall", essence == null ? null : essence.humidity());
+        return "Temperatura " + climatePlacementValue(temperature) + " · Humedad " + climatePlacementValue(humidity);
+    }
+
+    private static String precipitationLine(YamlConfiguration config, String path, BiomeEssences.Essence essence) {
+        Object value = biomeValue(config, path, "precipitation", "has_precipitation", essence == null ? null : essence.precipitation());
+        if (value instanceof Boolean active) {
+            return active ? "Lluvia o nieve habilitada" : "Sin lluvia ni nieve";
+        }
+        return "Precipitación según el bioma base";
+    }
+
+    private static String climateValue(YamlConfiguration config, String path, String key, Object fallback) {
+        String status = config.contains(path + "." + key) ? "Actual" : "Heredado";
+        return status + " · " + climatePlacementValue(biomeValue(config, path, key, key, fallback));
+    }
+
+    private static Object biomeValue(YamlConfiguration config, String path, String key, String advanced, Object fallback) {
+        return config.get(path + "." + key, config.get(path + ".data." + advanced, fallback));
+    }
+
+    private static String climatePlacementValue(Object value) {
+        if (value instanceof Number number) {
+            return BiomeEssences.number(number);
+        }
+        if (value instanceof List<?> range && range.size() == 2
+                && range.getFirst() instanceof Number minimum && range.getLast() instanceof Number maximum) {
+            return BiomeEssences.number(minimum) + " a " + BiomeEssences.number(maximum);
+        }
+        return Objects.toString(value, "Automático");
+    }
+
+    private static String placementLine(YamlConfiguration config, String path) {
+        var section = config.getConfigurationSection(path + ".climate");
+        int count = section == null ? 0 : section.getKeys(false).size();
+        return count == 0 ? "Ubicación climática automática" : "Parámetros de ubicación · " + count;
+    }
+
+    private static String[] colorSummary(YamlConfiguration config, String path) {
+        List<String> details = COLORS.stream().filter(option -> config.contains(path + ".colors." + option.id()))
+                .map(option -> option.label() + " · " + displayColor(config.get(path + ".colors." + option.id())))
+                .toList();
+        if (details.isEmpty()) {
+            return new String[]{config.contains(path + ".data.effects") ? "Colores del ajuste avanzado" : "Colores del bioma base"};
+        }
+        return details.toArray(String[]::new);
+    }
+
+    private static String displayColor(Object value) {
+        if (value instanceof Number number) {
+            double color = number.doubleValue();
+            if (color >= 0 && color <= 0xffffff && Math.rint(color) == color) {
+                return BiomeEssences.hex((int) color);
+            }
+        }
+        return Objects.toString(value, "Según Minecraft");
+    }
+
+    private static int layerDepth(YamlConfiguration config, String owner, String key, int fallback) {
+        return config.getInt(owner + "." + key + "-depth", config.getInt("world." + key + "-depth", fallback));
+    }
+
+    private static Map<String, Integer> effectivePalette(YamlConfiguration config, String owner, String key) {
+        var local = readPalette(config, owner + "." + key);
+        return local.isEmpty() && !owner.equals("world") ? readPalette(config, "world." + key) : local;
+    }
+
+    private static String layerSummary(YamlConfiguration config, String owner, String key, String label, int fallbackDepth) {
+        var palette = effectivePalette(config, owner, key);
+        if (palette.isEmpty()) {
+            return label + " · Según el generador";
+        }
+        String materials = palette.size() == 1 ? palette.keySet().iterator().next() : palette.size() + " materiales";
+        return label + " · " + materials + " / " + layerDepth(config, owner, key, fallbackDepth) + " capa(s)";
+    }
+
+    private static String mobSummary(YamlConfiguration config, String path) {
+        var mobs = config.getConfigurationSection(path + ".mobs");
+        int entries = 0;
+        if (mobs != null) {
+            for (String key : mobs.getKeys(false)) {
+                var category = mobs.getConfigurationSection(key);
+                if (category != null) {
+                    entries += category.getKeys(false).size();
+                }
+            }
+        }
+        boolean inherited = config.getBoolean(path + ".vanilla-mobs", false);
+        String mode = config.contains(path + ".data.spawners") ? "Con ajustes avanzados"
+                : inherited ? "Hereda fauna base" : "Sin herencia vanilla";
+        return "Mobs elegidos · " + entries + " / " + mode;
+    }
+
+    private static String[] catalogSummary(YamlConfiguration config, String project, String biome) {
+        String qualified = Projects.namespace(project) + ":" + biome;
+        return new String[]{
+                "Grupos de plantillas · " + attachedEntries(config.getConfigurationSection("structures"), biome, qualified, true),
+                "Vegetación personalizada · " + attachedEntries(config.getConfigurationSection("vegetation"), biome, qualified, false)};
+    }
+
+    private static long attachedEntries(ConfigurationSection parent, String biome, String qualified, boolean attachByDefault) {
+        if (parent == null) {
+            return 0;
+        }
+        return parent.getKeys(false).stream().map(parent::getConfigurationSection).filter(Objects::nonNull).filter(entry -> {
+            if (!entry.contains("biomes")) {
+                return attachByDefault;
+            }
+            var targets = entry.getStringList("biomes");
+            return targets.contains(biome) || targets.contains(qualified);
+        }).count();
+    }
+
+    private static String sectionSummary(YamlConfiguration config, String path) {
+        var section = config.getConfigurationSection(path);
+        return section == null || section.getKeys(false).isEmpty() ? "Sin ajustes propios"
+                : "Campos configurados · " + section.getKeys(false).size();
+    }
+
+    private JsonObject baseline(String path) {
+        return vanillaDefinitions.computeIfAbsent(path, key -> BiomeEssences.definition("/worldgen/vanilla/" + key + ".json"));
+    }
+
+    private String terrainValue(YamlConfiguration config, String terrain, String field, String property, String nested) {
+        String path = "world." + field;
+        if (config.contains(path)) {
+            return "Actual · " + value(config, path, "Revisá este valor");
+        }
+        String nativePath = "world.noise-settings." + property;
+        if (nested != null) {
+            nativePath += "." + nested;
+        }
+        if (config.contains(nativePath)) {
+            return "Avanzado · " + value(config, nativePath, "Revisá este valor");
+        }
+        if (TERRAINS.stream().noneMatch(option -> option.id().equals(terrain))) {
+            return "Según el terreno";
+        }
+        var datum = baseline("worldgen/noise_settings/" + terrain).get(property);
+        if (nested != null) {
+            datum = datum.getAsJsonObject().get(nested);
+        }
+        return "Heredado · " + datum.getAsString();
+    }
+
     private static String name(String value) {
         if (value.isBlank() || value.length() > 48 || value.chars().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException("Usá un nombre de 1 a 48 caracteres.");
@@ -657,7 +877,20 @@ final class BiomeMenus {
         throw new IllegalArgumentException("Escribí un número entre " + minimum + " y " + maximum + ".");
     }
 
-    private record Option(String id, String label, Material icon) {}
+    private record Option(String id, String label, Material icon, List<String> description) {
+        private Option(String id, String label, Material icon, String... description) {
+            this(id, label, icon, List.of(description));
+        }
+
+        private List<String> lore() {
+            if (id.isEmpty()) {
+                return description;
+            }
+            var lore = new ArrayList<>(description);
+            lore.add("ID · " + id);
+            return lore;
+        }
+    }
     private record Palette(Map<String, Integer> original, Map<String, Integer> blocks) {}
     private record SpawnRule(int weight, int min, int max) {}
 }

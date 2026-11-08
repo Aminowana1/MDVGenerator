@@ -1,16 +1,19 @@
-name: MDVGenerator
-version: '2.0.0'
-main: dev.mira.worldgen.MDVGenerator
+name: MDVDimensions
+version: '2.1.0'
+main: dev.mira.worldgen.MDVDimensions
 api-version: '1.21.6'
+load: STARTUP
 description: Diseñá biomas, plantillas y dimensiones desde el juego.
 commands:
-  mdv:
+  dim:
     description: Proyectos de generación de mundos.
-    aliases: [gm, mdvgenerator, generamundos]
 permissions:
-  mdvgenerator.admin:
-    description: Permite diseñar, exportar e instalar proyectos de MDVGenerator.
+  mdvdimensions.admin:
+    description: Permite diseñar, exportar e instalar proyectos de MDVDimensions.
     default: op
+  mdvgenerator.admin:
+    description: Permiso anterior compatible con MDVDimensions.
+    default: false
   generamundos.admin:
-    description: Permiso anterior compatible con MDVGenerator.
+    description: Permiso anterior compatible con MDVDimensions.
     default: false

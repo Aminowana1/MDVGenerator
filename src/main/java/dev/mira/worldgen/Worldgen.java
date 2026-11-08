@@ -43,6 +43,12 @@ public final class Worldgen {
     private static final List<String> MOB_CATEGORIES = List.of("monster", "creature", "ambient", "axolotls",
             "underground_water_creature", "water_creature", "water_ambient", "misc");
     private static final int VEGETATION_STEP = 9;
+    private static final Set<String> DOUBLE_PLANTS = Set.of("minecraft:sunflower", "minecraft:lilac",
+            "minecraft:rose_bush", "minecraft:peony", "minecraft:tall_grass", "minecraft:large_fern",
+            "minecraft:tall_seagrass", "minecraft:small_dripleaf", "minecraft:pitcher_plant");
+    private static final Set<String> AQUATIC_PLANTS = Set.of("minecraft:seagrass", "minecraft:tall_seagrass",
+            "minecraft:kelp", "minecraft:kelp_plant", "minecraft:sea_pickle", "minecraft:small_dripleaf");
+    private static final List<String> AIR_BLOCKS = List.of("minecraft:air", "minecraft:cave_air", "minecraft:void_air");
 
     private Worldgen() {}
 
@@ -147,6 +153,7 @@ public final class Worldgen {
                 writeStructure(data, namespace, validateId(id), requiredSection(structures, id), biomeIds);
             }
         }
+        RuntimePlacements.export(packRoot, namespace, config, biomeIds);
     }
 
     private static String biomeBase(ConfigurationSection biome, String terrain) {
@@ -254,7 +261,13 @@ public final class Worldgen {
         for (String key : vegetation.getKeys(false)) {
             String id = validateId(key);
             ConfigurationSection entry = requiredSection(vegetation, id);
+            String mode = choice(entry, "mode", "block", List.of("block", "template"));
+            if (mode.equals("template")) {
+                continue;
+            }
             JsonObject block = blockState(entry.getString("block", ""));
+            String blockId = block.get("Name").getAsString();
+            boolean anySupport = choice(entry, "support", "any", List.of("any", "vanilla")).equals("any");
             int count = integer(entry, "count", 4, 1, 128);
             String heightmap = choice(entry, "heightmap", "surface", List.of("surface", "ocean_floor"));
             JsonObject substrate = substratePredicate(entry);
@@ -267,15 +280,20 @@ public final class Worldgen {
             }
             String featureId = "vegetation/" + id;
             String qualified = namespace + ":" + featureId;
-            JsonObject feature = object("type", "minecraft:simple_block", "config", object(
-                    "to_place", object("type", "minecraft:simple_state_provider", "state", block)));
-            List<String> replaceable = List.of("minecraft:air", "minecraft:cave_air", "minecraft:void_air");
-            if (heightmap.equals("ocean_floor") && List.of("minecraft:seagrass", "minecraft:tall_seagrass",
-                    "minecraft:kelp", "minecraft:kelp_plant", "minecraft:sea_pickle").contains(block.get("Name").getAsString())) {
-                replaceable = List.of("minecraft:water");
+            boolean underwater = heightmap.equals("ocean_floor") && AQUATIC_PLANTS.contains(blockId);
+            if (blockId.equals("minecraft:sea_pickle")) {
+                block.add("Properties", object("waterlogged", Boolean.toString(underwater)));
             }
-            JsonObject filter = object("type", "minecraft:all_of", "predicates", List.of(
-                    object("type", "minecraft:matching_blocks", "blocks", replaceable), substrate));
+            List<String> replaceable = underwater ? List.of("minecraft:water") : AIR_BLOCKS;
+            boolean doublePlant = anySupport && DOUBLE_PLANTS.contains(blockId);
+            JsonObject feature = anySupport
+                    ? columnFeature(blockId, block, replaceable, doublePlant, underwater)
+                    : object("type", "minecraft:simple_block", "config", object("to_place", stateProvider(block)));
+            List<JsonObject> conditions = new ArrayList<>(List.of(matchingBlocks(replaceable, 0), substrate));
+            if (doublePlant) {
+                conditions.add(matchingBlocks(replaceable, 1));
+            }
+            JsonObject filter = object("type", "minecraft:all_of", "predicates", conditions);
             JsonObject placed = object("feature", qualified, "placement", List.of(
                     object("type", "minecraft:count", "count", count),
                     object("type", "minecraft:in_square"),
@@ -292,11 +310,46 @@ public final class Worldgen {
         return byBiome;
     }
 
+    private static JsonObject columnFeature(String blockId, JsonObject block, List<String> replaceable,
+            boolean doublePlant, boolean underwater) {
+        List<JsonObject> layers;
+        if (doublePlant) {
+            JsonObject lower = plantHalf(blockId, "lower", underwater);
+            JsonObject upper = plantHalf(blockId, "upper", underwater);
+            layers = List.of(columnLayer(lower), columnLayer(upper));
+        } else {
+            layers = List.of(columnLayer(block));
+        }
+        // BlockColumnFeature begins its clearance scan one step ahead of the placement origin.
+        return object("type", "minecraft:block_column", "config", object(
+                "direction", "up", "prioritize_tip", false, "layers", layers,
+                "allowed_placement", matchingBlocks(replaceable, -1)));
+    }
+
+    private static JsonObject plantHalf(String blockId, String half, boolean underwater) {
+        JsonObject properties = object("half", half);
+        if (blockId.equals("minecraft:small_dripleaf")) {
+            properties.addProperty("waterlogged", Boolean.toString(underwater));
+        }
+        return object("Name", blockId, "Properties", properties);
+    }
+
+    private static JsonObject columnLayer(JsonObject state) {
+        return object("height", 1, "provider", stateProvider(state));
+    }
+
+    private static JsonObject stateProvider(JsonObject state) {
+        return object("type", "minecraft:simple_state_provider", "state", state);
+    }
+
+    private static JsonObject matchingBlocks(Iterable<String> blocks, int offsetY) {
+        return object("type", "minecraft:matching_blocks", "blocks", blocks, "offset", List.of(0, offsetY, 0));
+    }
+
     private static JsonObject substratePredicate(ConfigurationSection entry) {
-        List<Integer> below = List.of(0, -1, 0);
         Object raw = entry.get("substrate");
-        if (raw == null) {
-            return object("type", "minecraft:solid", "offset", below);
+        if (raw == null || "auto".equals(raw)) {
+            return object("type", "minecraft:solid", "offset", List.of(0, -1, 0));
         }
         List<?> materials = raw instanceof List<?> list ? list : List.of(raw);
         Set<String> blockIds = new LinkedHashSet<>();
@@ -309,10 +362,10 @@ public final class Worldgen {
         if (blockIds.isEmpty()) {
             throw invalid(entry, "substrate", "agregá al menos un bloque");
         }
-        return object("type", "minecraft:matching_blocks", "blocks", blockIds, "offset", below);
+        return matchingBlocks(blockIds, -1);
     }
 
-    private static List<String> biomeTargets(ConfigurationSection entry, String namespace, List<String> fallback) {
+    static List<String> biomeTargets(ConfigurationSection entry, String namespace, List<String> fallback) {
         Object raw = entry.get("biomes");
         if (raw == null) {
             return fallback;
@@ -595,6 +648,9 @@ public final class Worldgen {
         int separation = integer(entry, "separation", tree ? 0 : Math.min(8, spacing - 1), 0, spacing - 1);
         double frequency = entry.contains("frequency")
                 ? decimal(entry.get("frequency"), entry, "frequency", 0, 1) : 1;
+        if (optionalSection(entry, "placement") != null) {
+            frequency = 0;
+        }
         int salt = integer(entry, "salt", qualified.hashCode() & Integer.MAX_VALUE, 0, Integer.MAX_VALUE);
         String heightmap = choice(entry, "heightmap", "surface", List.of("surface", "ocean_floor", "fixed"));
         int startHeight = heightmap.equals("fixed") ? integer(entry, "height", 64, -2032, 2031) : 0;
@@ -638,7 +694,7 @@ public final class Worldgen {
         writeJson(data.resolve("worldgen/structure_set").resolve(id + ".json"), structureSet);
     }
 
-    private static Map<String, Integer> templates(String id, ConfigurationSection section) {
+    static Map<String, Integer> templates(String id, ConfigurationSection section) {
         ConfigurationSection weighted = section.getConfigurationSection("templates");
         Map<String, Integer> templates = new LinkedHashMap<>();
         if (weighted != null) {
@@ -693,7 +749,7 @@ public final class Worldgen {
         return json;
     }
 
-    private static ConfigurationSection requiredSection(ConfigurationSection config, String key) {
+    static ConfigurationSection requiredSection(ConfigurationSection config, String key) {
         ConfigurationSection section = config.getConfigurationSection(key);
         if (section == null) {
             throw invalid(config, key, "falta una sección de configuración");
@@ -701,11 +757,11 @@ public final class Worldgen {
         return section;
     }
 
-    private static ConfigurationSection optionalSection(ConfigurationSection config, String key) {
+    static ConfigurationSection optionalSection(ConfigurationSection config, String key) {
         return config.contains(key) ? requiredSection(config, key) : null;
     }
 
-    private static String choice(ConfigurationSection section, String key, String fallback, List<String> allowed) {
+    static String choice(ConfigurationSection section, String key, String fallback, List<String> allowed) {
         String value = section.getString(key, fallback);
         if (!allowed.contains(value)) {
             throw invalid(section, key, "elegí entre " + String.join(", ", allowed));
@@ -713,14 +769,14 @@ public final class Worldgen {
         return value;
     }
 
-    private static boolean bool(ConfigurationSection section, String key, boolean fallback) {
+    static boolean bool(ConfigurationSection section, String key, boolean fallback) {
         if (section.contains(key) && !section.isBoolean(key)) {
             throw invalid(section, key, "usá true o false");
         }
         return section.getBoolean(key, fallback);
     }
 
-    private static int integer(ConfigurationSection section, String key, int fallback, int minimum, int maximum) {
+    static int integer(ConfigurationSection section, String key, int fallback, int minimum, int maximum) {
         if (!section.contains(key)) {
             return fallback;
         }
@@ -731,7 +787,7 @@ public final class Worldgen {
         return (int) value;
     }
 
-    private static double decimal(Object value, ConfigurationSection section, String key, double minimum, double maximum) {
+    static double decimal(Object value, ConfigurationSection section, String key, double minimum, double maximum) {
         if (!(value instanceof Number number) || !Double.isFinite(number.doubleValue())
                 || number.doubleValue() < minimum || number.doubleValue() > maximum) {
             throw invalid(section, key, "usá un número entre " + minimum + " y " + maximum);
@@ -739,12 +795,12 @@ public final class Worldgen {
         return number.doubleValue();
     }
 
-    private static IllegalArgumentException invalid(ConfigurationSection section, String key, String explanation) {
+    static IllegalArgumentException invalid(ConfigurationSection section, String key, String explanation) {
         String prefix = section.getCurrentPath();
         return new IllegalArgumentException((prefix == null || prefix.isEmpty() ? "" : prefix + ".") + key + ": " + explanation);
     }
 
-    private static String validateId(String id) {
+    static String validateId(String id) {
         if (!ID.matcher(id).matches()) {
             throw new IllegalArgumentException("Identificador inválido: " + id + ". Usá minúsculas, números, guiones o _.");
         }

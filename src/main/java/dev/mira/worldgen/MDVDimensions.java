@@ -6,6 +6,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
@@ -13,12 +14,13 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Level;
 
-public final class MDVGenerator extends JavaPlugin implements Listener {
+public final class MDVDimensions extends JavaPlugin implements Listener {
     private static final List<String> ACTIONS = List.of("menu", "crear", "proyectos", "pos1", "pos2", "guardar",
             "actualizar", "copiar", "validar", "exportar", "instalar", "entrada", "cancelar");
     private final Capture capture = new Capture();
     private Projects projects;
     private Menus menus;
+    private RuntimePlacements placements;
 
     @Override
     public void onEnable() {
@@ -27,8 +29,9 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
-        if (getServer().getPluginManager().getPlugin("GeneraMundos") != null) {
-            getLogger().severe("Retirá el JAR de GeneraMundos y reiniciá para migrar sus proyectos a MDVGenerator.");
+        if (getServer().getPluginManager().getPlugin("GeneraMundos") != null
+                || getServer().getPluginManager().getPlugin("MDVGenerator") != null) {
+            getLogger().severe("Retirá los JAR anteriores de GeneraMundos o MDVGenerator y reiniciá con MDVDimensions.");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -36,20 +39,36 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
         try {
             int migrated = projects.migrateLegacy();
             if (migrated > 0) {
-                getLogger().info("Proyectos importados de GeneraMundos: " + migrated);
+                getLogger().info("Proyectos importados de versiones anteriores: " + migrated);
             }
         } catch (IOException ex) {
-            getLogger().log(Level.SEVERE, "No se pudieron copiar los proyectos de GeneraMundos.", ex);
+            getLogger().log(Level.SEVERE, "No se pudieron copiar los proyectos anteriores.", ex);
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
-        menus = new Menus(this, projects, capture);
+        placements = new RuntimePlacements(this);
         getServer().getPluginManager().registerEvents(this, this);
-        getServer().getPluginManager().registerEvents(menus, this);
+        getServer().getPluginManager().registerEvents(placements, this);
+        getServer().getWorlds().forEach(placements::attach);
+    }
+
+    @EventHandler
+    public void onServerLoad(ServerLoadEvent event) {
+        initializeMenus();
+    }
+
+    private void initializeMenus() {
+        if (menus == null) {
+            menus = new Menus(this, projects, capture);
+            getServer().getPluginManager().registerEvents(menus, this);
+        }
     }
 
     @Override
     public void onDisable() {
+        if (placements != null) {
+            placements.detach();
+        }
         if (menus != null) {
             menus.shutdown();
         }
@@ -58,18 +77,24 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         capture.clear(event.getPlayer().getUniqueId());
-        menus.forget(event.getPlayer());
+        if (menus != null) {
+            menus.forget(event.getPlayer());
+        }
     }
 
     static boolean hasAccess(CommandSender sender) {
-        return sender.hasPermission("mdvgenerator.admin") || sender.hasPermission("generamundos.admin");
+        return sender.hasPermission("mdvdimensions.admin") || sender.hasPermission("mdvgenerator.admin")
+                || sender.hasPermission("generamundos.admin");
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String alias, String[] args) {
         if (!hasAccess(sender)) {
-            sender.sendMessage("Necesitás el permiso mdvgenerator.admin.");
+            sender.sendMessage("Necesitás el permiso mdvdimensions.admin.");
             return true;
+        }
+        if (sender instanceof Player) {
+            initializeMenus();
         }
         if (args.length == 0) {
             if (sender instanceof Player player) {
@@ -92,7 +117,7 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
                 }
                 case "entrada" -> {
                     if (args.length < 2) {
-                        throw new IllegalArgumentException("Uso /mdv entrada <valor>");
+                        throw new IllegalArgumentException("Uso /dim entrada <valor>");
                     }
                     menus.submit(player(sender), String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
                 }
@@ -107,7 +132,7 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
                 case "proyectos" -> {
                     requireArgs(args, 1, "proyectos");
                     var names = projects.list();
-                    sender.sendMessage(names.isEmpty() ? "Todavía no hay proyectos. Usá /gm crear <proyecto>."
+                    sender.sendMessage(names.isEmpty() ? "Todavía no hay proyectos. Usá /dim crear <proyecto>."
                             : "Proyectos disponibles · " + String.join(", ", names));
                 }
                 case "pos1", "pos2" -> {
@@ -156,10 +181,10 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
                 default -> help(sender);
             }
         } catch (IllegalArgumentException ex) {
-            sender.sendMessage("MDVGenerator · " + ex.getMessage());
+            sender.sendMessage("MDVDimensions · " + ex.getMessage());
         } catch (IOException ex) {
-            sender.sendMessage("MDVGenerator · Error de archivo. Revisá la consola. Si el ZIP está en uso, reemplazalo con el servidor apagado.");
-            getLogger().log(Level.WARNING, "Falló /mdv " + args[0], ex);
+            sender.sendMessage("MDVDimensions · Error de archivo. Revisá la consola. Si el ZIP está en uso, reemplazalo con el servidor apagado.");
+            getLogger().log(Level.WARNING, "Falló /dim " + args[0], ex);
         }
         return true;
     }
@@ -195,7 +220,7 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
 
     private static void requireArgs(String[] args, int count, String usage) {
         if (args.length != count) {
-            throw new IllegalArgumentException("Uso /mdv " + usage);
+            throw new IllegalArgumentException("Uso /dim " + usage);
         }
     }
 
@@ -208,12 +233,12 @@ public final class MDVGenerator extends JavaPlugin implements Listener {
     }
 
     private static void help(CommandSender sender) {
-        sender.sendMessage("/mdv abre el menú dentro del juego. /mdv menu [proyecto] abre un proyecto.");
-        sender.sendMessage("/mdv crear <proyecto> · /mdv proyectos");
-        sender.sendMessage("/mdv pos1 · /mdv pos2");
-        sender.sendMessage("/mdv guardar <proyecto> <plantilla> <bioma> <arbol|estructura|otro> [--entidades]");
-        sender.sendMessage("/mdv actualizar <proyecto> <plantilla> [--entidades]");
-        sender.sendMessage("/mdv copiar <origen> <plantilla> <destino> <bioma>");
-        sender.sendMessage("/mdv validar <proyecto> · /mdv exportar <proyecto> · /mdv instalar <proyecto>");
+        sender.sendMessage("/dim abre el menú dentro del juego. /dim menu [proyecto] abre un proyecto.");
+        sender.sendMessage("/dim crear <proyecto> · /dim proyectos");
+        sender.sendMessage("/dim pos1 · /dim pos2");
+        sender.sendMessage("/dim guardar <proyecto> <plantilla> <bioma> <arbol|estructura|otro> [--entidades]");
+        sender.sendMessage("/dim actualizar <proyecto> <plantilla> [--entidades]");
+        sender.sendMessage("/dim copiar <origen> <plantilla> <destino> <bioma>");
+        sender.sendMessage("/dim validar <proyecto> · /dim exportar <proyecto> · /dim instalar <proyecto>");
     }
 }

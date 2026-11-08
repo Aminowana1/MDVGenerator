@@ -6,12 +6,17 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Consumer;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
 final class CatalogMenus {
+    private static final int MIN_Y = -2032;
+    private static final int MAX_Y = 2031;
+    private static final int MAX_DEPTH = 4063;
+    private static final int MAX_GROUP_ATTEMPTS = 16;
     private final Menus menus;
 
     CatalogMenus(Menus menus) {
@@ -31,9 +36,9 @@ final class CatalogMenus {
         view.button(28, Material.STRUCTURE_BLOCK, "Capturar una plantilla",
                 () -> captureKind(player, project, biome), "Guardá los bloques entre las dos posiciones marcadas.");
         view.button(29, Material.GOLDEN_AXE, "Herramienta de selección",
-                () -> menus.selector(player), "Clic izquierdo y derecho para marcar las esquinas.", "Usá /mdv para volver al menú.");
-        view.button(31, Material.BONE_MEAL, "Crear vegetación de un bloque",
-                () -> createPlant(player, project, biome), "Flores, pasto, hongos y otros bloques vanilla.");
+                () -> menus.selector(player), "Clic izquierdo y derecho para marcar las esquinas.", "Usá /dim para volver al menú.");
+        view.button(31, Material.BONE_MEAL, "Crear vegetación",
+                () -> createPlant(player, project, biome, null), "Usá un bloque vanilla o una plantilla que capturaste.");
         view.button(33, Material.COMPASS, "Grupos de aparición",
                 () -> chooseGroup(player, project, biome, () -> open(player, project, biome)),
                 "Configurá variantes, biomas, frecuencia y altura.");
@@ -56,12 +61,14 @@ final class CatalogMenus {
         Menus.Action back = () -> open(player, project, biome);
         if (kind == Kind.VEGETATION) {
             menus.choose(player, kind.label, plants(config, project, biome), name -> name,
-                    name -> plantIcon(config, name), back, name -> plant(player, project, name, back));
+                    name -> plantIcon(config, name), back, name -> plant(player, project, name, back),
+                    name -> plantLore(config, project, name));
             return;
         }
         List<String> names = templates(config, menus.projects.listTemplates(project), project, biome, kind);
         menus.choose(player, kind.label, names, name -> name, name -> kind.icon, back,
-                name -> asset(player, project, biome, name, () -> showKind(player, project, biome, kind)));
+                name -> asset(player, project, biome, name, () -> showKind(player, project, biome, kind)),
+                name -> templateLore(config, project, biome, name));
     }
 
     private void captureKind(Player player, String project, String biome) throws Exception {
@@ -74,7 +81,7 @@ final class CatalogMenus {
         Menus.Action back = () -> captureKind(player, project, biome);
         Menus.View view = menus.menu(player, "Capturar · " + kind.label);
         view.button(20, Material.GOLDEN_AXE, "Marcar la selección", () -> menus.selector(player),
-                "Marcá ambas esquinas con clic izquierdo y derecho.", "Volvé con /mdv.");
+                "Marcá ambas esquinas con clic izquierdo y derecho.", "Volvé con /dim.");
         view.button(22, Material.ARMOR_STAND, entities ? "Incluir entidades: sí" : "Incluir entidades: no",
                 () -> capture(player, project, biome, kind, !entities), "Los bloques siempre se guardan.");
         view.button(24, Material.STRUCTURE_BLOCK, "Guardar selección", () ->
@@ -105,11 +112,12 @@ final class CatalogMenus {
                                 name -> plantIcon(config, name), chooseAgain, name -> {
                                     setPlantBiome(project, name, biome, true);
                                     plant(player, project, name, back);
-                                });
+                                }, name -> plantLore(config, project, name));
                     } else {
                         menus.choose(player, "Plantillas · " + kind.label,
                                 templates(config, menus.projects.listTemplates(project), project, null, kind), name -> name,
-                                name -> kind.icon, chooseAgain, name -> asset(player, project, biome, name, chooseAgain));
+                                name -> kind.icon, chooseAgain, name -> asset(player, project, biome, name, chooseAgain),
+                                name -> templateLore(config, project, null, name));
                     }
                 });
     }
@@ -133,7 +141,8 @@ final class CatalogMenus {
                 "El grupo elige entre sus variantes según sus pesos.");
         view.button(23, Material.COMPASS, "Editar grupos que la usan", () -> menus.choose(player, "Grupos · " + name,
                 matching, id -> id, id -> kind.icon, reopen,
-                id -> group(player, project, id, reopen)), "Podés ajustar su peso o quitarla del grupo.");
+                id -> group(player, project, id, reopen), id -> groupLore(config, project, id)),
+                "Podés ajustar su peso o quitarla del grupo.");
         view.button(24, Material.STRUCTURE_BLOCK, "Actualizar bloques", () -> recapture(player, project, name, false, reopen),
                 "Usá las dos posiciones seleccionadas para reemplazar la plantilla.", "Sus grupos y sus pesos se conservan.");
         view.button(31, Material.ENDER_CHEST, "Copiar a otro proyecto", () -> menus.choose(player, "Copiar · " + name,
@@ -148,6 +157,8 @@ final class CatalogMenus {
                     Kind.NBT, option -> option.label, option -> option.icon, reopen,
                     option -> setTemplateKind(project, name, option, reopen)), "Disponible para plantillas sin grupo.");
         }
+        view.button(35, Material.BONE_MEAL, "Usar como vegetación", () -> createPlant(player, project, biome, name),
+                "Crea una regla de vegetación para esta plantilla.");
         view.button(49, Material.ARROW, "Volver", back);
         view.open();
     }
@@ -155,7 +166,7 @@ final class CatalogMenus {
     private void recapture(Player player, String project, String name, boolean entities, Menus.Action back) throws Exception {
         Menus.View view = menus.menu(player, "Actualizar · " + name);
         view.button(20, Material.GOLDEN_AXE, "Marcar la selección", () -> menus.selector(player),
-                "Volvé al menú con /mdv después de seleccionar.");
+                "Volvé al menú con /dim después de seleccionar.");
         view.button(22, Material.ARMOR_STAND, entities ? "Incluir entidades: sí" : "Incluir entidades: no",
                 () -> recapture(player, project, name, !entities, back));
         view.button(24, Material.LIME_DYE, "Confirmar actualización", () -> {
@@ -171,7 +182,8 @@ final class CatalogMenus {
         YamlConfiguration config = config(project);
         menus.choose(player, "Grupos de aparición", groups(config, project, biome), id -> id,
                 id -> groupKind(config.getConfigurationSection("structures." + id)).icon, back,
-                id -> group(player, project, id, () -> chooseGroup(player, project, biome, back)));
+                id -> group(player, project, id, () -> chooseGroup(player, project, biome, back)),
+                id -> groupLore(config, project, id));
     }
 
     private void createGroup(Player player, String project, String biome, String asset, Kind kind, Menus.Action back) throws Exception {
@@ -227,7 +239,7 @@ final class CatalogMenus {
                         : "Todas las variantes del grupo aparecerán en " + biome + " y la nueva plantilla también en los demás biomas del grupo.";
                 menus.confirm(player, "Asociar grupo · " + id, back, attach, detail);
             }
-        });
+        }, id -> groupLore(config, project, id));
     }
 
     private void setTemplateKind(String project, String name, Kind kind, Menus.Action back) throws Exception {
@@ -252,14 +264,19 @@ final class CatalogMenus {
         double frequency = entry.getDouble("frequency", 1.0);
         int offset = entry.getInt("height-offset", 0);
         String heightmap = entry.getString("heightmap", "surface");
+        ConfigurationSection placement = entry.getConfigurationSection("placement");
         String adaptation = entry.getString("terrain-adaptation", "none");
         boolean ignoreAir = entry.getBoolean("ignore-air", true);
         String path = "structures." + id;
+        Map<String, Integer> weights = variants(entry, id);
+        List<String> targets = groupBiomes(config, project, entry);
         Menus.View view = menus.menu(player, "Aparición · " + id);
-        view.button(10, kind.icon, "Variantes · " + variants(entry, id).size(),
-                () -> variantList(player, project, id, reopen), "Agregá plantillas y ajustá su peso relativo.");
-        view.button(12, Material.GRASS_BLOCK, "Biomas · " + groupBiomes(config, project, entry).size(),
-                () -> groupBiomeList(player, project, id, reopen), "Elegí en qué biomas aparece el grupo.");
+        view.button(10, kind.icon, "Variantes · " + weights.size(),
+                () -> variantList(player, project, id, reopen),
+                summarize(weights.entrySet().stream().map(weight -> weight.getKey() + " ×" + weight.getValue()).toList()),
+                "Agregá plantillas y ajustá su peso relativo.");
+        view.button(12, Material.GRASS_BLOCK, "Biomas · " + targets.size(),
+                () -> groupBiomeList(player, project, id, reopen), biomeSummary(targets), "Elegí en qué biomas aparece el grupo.");
         view.button(14, Material.MAP, "Distancia: " + spacing + " chunks", () ->
                 menus.input(player, "Escribí la distancia entre intentos (1–4096 chunks).", Integer.toString(spacing),
                         reopen, value -> {
@@ -289,31 +306,58 @@ final class CatalogMenus {
         view.button(19, Material.EXPERIENCE_BOTTLE, "Probabilidad: " + frequency, () -> menus.input(player,
                 "Escribí un número de 0 a 1. Por ejemplo 0,25 es 25 %.", Double.toString(frequency), reopen,
                 value -> set(project, path + ".frequency", probability(value), reopen)), "Se aplica a cada intento de aparición.");
-        view.button(21, Material.FEATHER, "Altura de referencia: " + heightLabel(heightmap), () ->
-                menus.choose(player, "Altura de referencia", List.of("surface", "ocean_floor", "fixed"),
-                        CatalogMenus::heightLabel, CatalogMenus::heightIcon, reopen, value -> {
-                            checkHeight(value, entry.getInt("height", 64), offset);
-                            set(project, path + ".heightmap", value, reopen);
-                        }), "El Nether con techo suele necesitar una altura fija.");
-        view.button(23, Material.LADDER, "Altura fija: " + entry.getInt("height", 64), () ->
-                menus.input(player, "Escribí la altura Y fija.", Integer.toString(entry.getInt("height", 64)), reopen,
-                        value -> {
-                            int height = whole(value, -2032, 2031);
-                            checkHeight(heightmap, height, offset);
-                            set(project, path + ".height", height, reopen);
-                        }), "Se usa si elegís la referencia Altura fija.");
+        if (placement == null) {
+            view.button(21, Material.FEATHER, "Altura nativa: " + heightLabel(heightmap), () ->
+                    menus.choose(player, "Altura de referencia", List.of("surface", "ocean_floor", "fixed"),
+                            CatalogMenus::heightLabel, CatalogMenus::heightIcon, reopen, value -> {
+                                menus.projects.editConfig(project, configNow -> {
+                                    ConfigurationSection nativeGroup = requireNativeGroup(configNow, id);
+                                    checkHeight(value, nativeGroup.getInt("height", 64), nativeGroup.getInt("height-offset", 0));
+                                    nativeGroup.set("heightmap", value);
+                                });
+                                reopen.run();
+                            }), "El Nether con techo suele necesitar una altura fija.");
+            view.button(23, Material.LADDER, "Altura fija: " + entry.getInt("height", 64), () ->
+                    menus.input(player, "Escribí la altura Y fija.", Integer.toString(entry.getInt("height", 64)), reopen,
+                            value -> {
+                                int height = whole(value, MIN_Y, MAX_Y);
+                                menus.projects.editConfig(project, configNow -> {
+                                    ConfigurationSection nativeGroup = requireNativeGroup(configNow, id);
+                                    checkHeight(nativeGroup.getString("heightmap", "surface"), height, nativeGroup.getInt("height-offset", 0));
+                                    nativeGroup.set("height", height);
+                                });
+                                reopen.run();
+                            }), "Se usa si elegís la referencia Altura fija.");
+        }
         view.button(25, Material.SCAFFOLDING, "Desplazamiento vertical: " + offset, () ->
                 menus.input(player, "Escribí cuántos bloques subir o bajar la plantilla.", Integer.toString(offset),
                         reopen, value -> {
-                            int next = whole(value, -2032, 2031);
-                            checkHeight(heightmap, entry.getInt("height", 64), next);
-                            set(project, path + ".height-offset", next, reopen);
+                            int next = whole(value, MIN_Y, MAX_Y);
+                            menus.projects.editConfig(project, current -> {
+                                ConfigurationSection group = requireGroup(current, id);
+                                ConfigurationSection rules = group.getConfigurationSection("placement");
+                                if (rules == null) {
+                                    checkHeight(group.getString("heightmap", "surface"), group.getInt("height", 64), next);
+                                } else if (rules.isInt("fixed-height")) {
+                                    checkHeight("fixed", rules.getInt("fixed-height"), next);
+                                }
+                                group.set("height-offset", next);
+                            });
+                            reopen.run();
                         }), "Un valor negativo entierra la base.");
         view.button(29, Material.DIRT, "Ajuste del terreno: " + adaptationLabel(adaptation), () ->
-                menus.choose(player, "Ajuste del terreno", List.of("none", "bury", "beard_thin", "beard_box"),
+                menus.choose(player, "Ajuste del terreno", placement == null
+                                ? List.of("none", "bury", "beard_thin", "beard_box") : List.of("none"),
                         CatalogMenus::adaptationLabel, choice -> Material.DIRT, reopen,
-                        choice -> set(project, path + ".terrain-adaptation", choice, reopen)),
-                "Modifica la forma del terreno alrededor de la construcción.");
+                        choice -> {
+                            menus.projects.editConfig(project, configNow -> {
+                                ConfigurationSection target = choice.equals("none") ? requireGroup(configNow, id)
+                                        : requireNativeGroup(configNow, id);
+                                target.set("terrain-adaptation", choice);
+                            });
+                            reopen.run();
+                        }),
+                "Modifica la forma del terreno alrededor de la construcción en modo nativo.");
         view.button(31, Material.GLASS, ignoreAir ? "Conservar el terreno en huecos: sí" : "Conservar el terreno en huecos: no",
                 () -> set(project, path + ".ignore-air", !ignoreAir, reopen),
                 "Activado, los bloques de aire guardados no borran el terreno.");
@@ -323,11 +367,185 @@ final class CatalogMenus {
                         value -> set(project, path + ".salt", value.strip().equalsIgnoreCase("auto")
                                 ? null : whole(value, 0, Integer.MAX_VALUE), reopen)),
                 "Cambiala si querés redistribuir los intentos en zonas nuevas.");
+        view.button(37, Material.SPYGLASS, "Zonas de aparición", () -> placement(player, project, id, reopen),
+                placementSummary(entry), attemptsSummary(placement), "Combiná superficie, fondo, altura y profundidad.",
+                "Podés usar superficie y una altura fija al mismo tiempo.");
         view.button(43, Material.BARRIER, "Quitar grupo", () -> menus.confirm(player, "Quitar · " + id, reopen,
                 () -> removeGroup(project, id, back), "Las plantillas se conservan en el catálogo.",
                 "Podés fijar la probabilidad en 0 para pausarlo y conservar el ID."));
         view.button(49, Material.ARROW, "Volver", back);
         view.open();
+    }
+
+    private void placement(Player player, String project, String id, Menus.Action back) throws Exception {
+        ConfigurationSection group = requireGroup(config(project), id);
+        ConfigurationSection current = group.getConfigurationSection("placement");
+        String nativeMode = group.getString("heightmap", "surface");
+        boolean surface = current == null ? nativeMode.equals("surface") : current.getBoolean("surface");
+        boolean oceanFloor = current == null ? nativeMode.equals("ocean_floor") : current.getBoolean("ocean-floor");
+        Integer fixed = null;
+        if (current == null && nativeMode.equals("fixed")) {
+            fixed = group.getInt("height", 64);
+        } else if (current != null && current.isInt("fixed-height")) {
+            fixed = current.getInt("fixed-height");
+        }
+        boolean allowVoid = current != null && current.getBoolean("allow-void");
+        int attempts = current == null ? 1 : current.getInt("attempts", 1);
+        String fixedLabel = fixed == null ? "desactivada" : "Y " + fixed;
+        String fixedValue = fixed == null ? "desactivar" : fixed.toString();
+        Menus.Action reopen = () -> placement(player, project, id, back);
+        Menus.View view = menus.menu(player, "Zonas de aparición · " + id);
+        view.button(4, Material.PAPER, current == null ? "Modo nativo" : "Modo combinado activo", () -> {},
+                current == null ? "El modo combinado se activa al guardar el primer cambio acá."
+                        : "Cada zona activa aporta una posible altura para el intento.",
+                "Podés activar varias zonas y combinarlas.", "Requiere Ajuste del terreno: Ninguno.");
+        view.button(10, Material.GRASS_BLOCK, "Superficie: " + enabled(surface),
+                () -> editPlacement(project, id, rules -> rules.set("surface", !rules.getBoolean("surface")), reopen),
+                "Coloca la base sobre el terreno de la columna.");
+        view.button(12, Material.KELP, "Fondo oceánico: " + enabled(oceanFloor),
+                () -> editPlacement(project, id, rules -> rules.set("ocean-floor", !rules.getBoolean("ocean-floor")), reopen),
+                "Toma como referencia el suelo debajo del agua.");
+        view.button(14, Material.LADDER, "Altura fija: " + fixedLabel, () -> menus.input(player,
+                "Escribí una coordenada Y o desactivar.", fixedValue, reopen, value ->
+                        editPlacement(project, id, rules -> rules.set("fixed-height", inactive(value)
+                                ? null : whole(value, MIN_Y, MAX_Y)), reopen)), "Usa siempre la altura Y que indiques.");
+        view.button(16, Material.COMPASS, "Rango de alturas: " + rangeLabel(current, "height"), () ->
+                rangeInput(player, project, id, current, "height", MIN_Y, MAX_Y, reopen),
+                "Ejemplo: -40 10 permite apariciones entre esas coordenadas Y.");
+        view.button(28, Material.DEEPSLATE, "Profundidad: " + rangeLabel(current, "depth"), () ->
+                rangeInput(player, project, id, current, "depth", 0, MAX_DEPTH, reopen),
+                "Ejemplo: 6 18 son entre 6 y 18 bloques debajo de la superficie.",
+                "La profundidad 0 corresponde al bloque justo arriba de la superficie.");
+        view.button(30, Material.GLASS, "Permitir vacío: " + enabled(allowVoid), () ->
+                editPlacement(project, id, rules -> rules.set("allow-void", !rules.getBoolean("allow-void")), reopen),
+                "Permite colocar la base aunque no haya un bloque sólido debajo.");
+        view.button(32, Material.BONE_MEAL, "Intentos por chunk elegible: " + attempts, () ->
+                menus.input(player, "Escribí cuántas posiciones probar por chunk, de 1 a 16.", Integer.toString(attempts),
+                        reopen, value -> editPlacement(project, id,
+                                rules -> rules.set("attempts", whole(value, 1, MAX_GROUP_ATTEMPTS)), reopen)),
+                "Con un intento se usa el centro. Con varios se prueban posiciones distintas.",
+                "Distancia 1 y separación 0 hacen elegible cada chunk antes de aplicar la probabilidad.");
+        view.button(49, Material.ARROW, "Volver", back);
+        view.open();
+    }
+
+    private void rangeInput(Player player, String project, String id, ConfigurationSection current,
+                            String kind, int min, int max, Menus.Action back) {
+        String minKey = "min-" + kind;
+        String maxKey = "max-" + kind;
+        String previous = current != null && current.isInt(minKey) && current.isInt(maxKey)
+                ? current.getInt(minKey) + " " + current.getInt(maxKey) : "desactivar";
+        menus.input(player, "Escribí el mínimo y máximo separados por un espacio, o desactivar.", previous,
+                back, value -> {
+                    int[] range = parseRange(value, min, max);
+                    editPlacement(project, id, rules -> {
+                        rules.set(minKey, range == null ? null : range[0]);
+                        rules.set(maxKey, range == null ? null : range[1]);
+                    }, back);
+                });
+    }
+
+    private void editPlacement(String project, String id, Consumer<ConfigurationSection> update, Menus.Action back)
+            throws Exception {
+        menus.projects.editConfig(project, config -> {
+            ConfigurationSection group = requireGroup(config, id);
+            if (!group.getString("terrain-adaptation", "none").equals("none")) {
+                throw new IllegalArgumentException("Antes de usar el modo combinado, poné Ajuste del terreno en Ninguno.");
+            }
+            ConfigurationSection rules = group.getConfigurationSection("placement");
+            if (rules == null) {
+                rules = group.createSection("placement");
+                String mode = group.getString("heightmap", "surface");
+                rules.set("surface", mode.equals("surface"));
+                rules.set("ocean-floor", mode.equals("ocean_floor"));
+                if (mode.equals("fixed")) {
+                    rules.set("fixed-height", group.getInt("height", 64));
+                }
+            }
+            update.accept(rules);
+            boolean absolute = validateRange(rules, "height", MIN_Y, MAX_Y);
+            boolean depth = validateRange(rules, "depth", 0, MAX_DEPTH);
+            boolean fixed = rules.isInt("fixed-height");
+            if (rules.contains("fixed-height") && (!fixed || rules.getInt("fixed-height") < MIN_Y
+                    || rules.getInt("fixed-height") > MAX_Y)) {
+                throw new IllegalArgumentException("Revisá la altura fija. Tiene que ser un entero entre -2032 y 2031.");
+            }
+            if (!rules.getBoolean("surface") && !rules.getBoolean("ocean-floor") && !fixed && !absolute && !depth) {
+                throw new IllegalArgumentException("Dejá al menos una zona de aparición activa.");
+            }
+            if (fixed) {
+                checkHeight("fixed", rules.getInt("fixed-height"), group.getInt("height-offset", 0));
+            }
+        });
+        back.run();
+    }
+
+    private static boolean validateRange(ConfigurationSection rules, String kind, int low, int high) {
+        String minKey = "min-" + kind;
+        String maxKey = "max-" + kind;
+        if (!rules.contains(minKey) && !rules.contains(maxKey)) {
+            return false;
+        }
+        int min = rules.getInt(minKey);
+        int max = rules.getInt(maxKey);
+        if (!rules.isInt(minKey) || !rules.isInt(maxKey) || min < low || min > max || max > high) {
+            throw new IllegalArgumentException("Revisá el mínimo y máximo del rango entre " + low + " y " + high + ".");
+        }
+        return true;
+    }
+
+    private static int[] parseRange(String input, int min, int max) {
+        if (inactive(input)) {
+            return null;
+        }
+        String[] parts = input.strip().split("[\\s,]+", -1);
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Escribí dos enteros separados por un espacio, o desactivar.");
+        }
+        int start = whole(parts[0], min, max);
+        int end = whole(parts[1], min, max);
+        if (start > end) {
+            throw new IllegalArgumentException("El mínimo debe ser menor o igual al máximo.");
+        }
+        return new int[]{start, end};
+    }
+
+    private static boolean inactive(String input) {
+        return input.strip().equalsIgnoreCase("desactivar");
+    }
+
+    private static String enabled(boolean value) {
+        return value ? "sí" : "no";
+    }
+
+    private static String rangeLabel(ConfigurationSection rules, String kind) {
+        return rules != null && rules.isInt("min-" + kind) && rules.isInt("max-" + kind)
+                ? rules.getInt("min-" + kind) + " a " + rules.getInt("max-" + kind) : "desactivado";
+    }
+
+    private static String placementSummary(ConfigurationSection group) {
+        ConfigurationSection rules = group.getConfigurationSection("placement");
+        if (rules == null) {
+            String mode = group.getString("heightmap", "surface");
+            return "Nativo · " + (mode.equals("fixed") ? "Y " + group.getInt("height", 64) : heightLabel(mode));
+        }
+        List<String> modes = new ArrayList<>();
+        if (rules.getBoolean("surface")) {
+            modes.add("superficie");
+        }
+        if (rules.getBoolean("ocean-floor")) {
+            modes.add("fondo oceánico");
+        }
+        if (rules.isInt("fixed-height")) {
+            modes.add("Y " + rules.getInt("fixed-height"));
+        }
+        if (rules.isInt("min-height") && rules.isInt("max-height")) {
+            modes.add("Y " + rangeLabel(rules, "height"));
+        }
+        if (rules.isInt("min-depth") && rules.isInt("max-depth")) {
+            modes.add("prof. " + rangeLabel(rules, "depth"));
+        }
+        return "Combinado · " + (modes.isEmpty() ? "sin zonas activas" : String.join(" · ", modes));
     }
 
     private void variantList(Player player, String project, String id, Menus.Action back) throws Exception {
@@ -339,14 +557,16 @@ final class CatalogMenus {
         Menus.View view = menus.menu(player, "Variantes · " + id);
         view.button(20, kind.icon, "Ver variantes · " + weights.size(), () ->
                 menus.choose(player, "Plantillas de " + id, List.copyOf(weights.keySet()),
-                        name -> name + " · peso " + weights.get(name), name -> kind.icon, reopen,
-                        name -> editVariant(player, project, id, name, reopen)));
+                        name -> name, name -> kind.icon, reopen,
+                        name -> editVariant(player, project, id, name, reopen),
+                        name -> List.of("Peso relativo: " + weights.get(name))));
         view.button(24, Material.CHEST, "Agregar desde el catálogo", () -> {
             List<String> available = templates(config, menus.projects.listTemplates(project), project, null, kind).stream()
                     .filter(name -> !weights.containsKey(name)).toList();
             menus.choose(player, "Nueva variante · " + id, available, name -> name, name -> kind.icon, reopen, name ->
                     menus.input(player, "Escribí el peso relativo de " + name + " (1–150).", "1", reopen,
-                            value -> editWeight(project, id, name, whole(value, 1, 150), reopen)));
+                            value -> editWeight(project, id, name, whole(value, 1, 150), reopen)),
+                    name -> templateLore(config, project, null, name));
         });
         view.button(49, Material.ARROW, "Volver", back);
         view.open();
@@ -424,61 +644,147 @@ final class CatalogMenus {
                 });
     }
 
-    private void createPlant(Player player, String project, String biome) throws Exception {
+    private void createPlant(Player player, String project, String biome, String template) throws Exception {
         Menus.Action back = () -> open(player, project, biome);
-        menus.input(player, "Escribí el ID de la vegetación, por ejemplo flor_lunar.", null, back, value -> {
+        menus.input(player, "Escribí el ID de la vegetación, por ejemplo flor_lunar.", template, back, value -> {
             String name = inputId(value);
-            choosePlantBlock(player, "Bloque para " + name, "minecraft:blue_orchid",
-                    () -> createPlant(player, project, biome), block -> {
-                        String path = "vegetation." + name;
-                        menus.projects.editConfig(project, config -> {
-                            if (config.contains(path)) {
-                                throw new IllegalArgumentException("Ya existe vegetación con ese ID.");
-                            }
-                            if (biome != null) {
-                                requireBiome(config, biome);
-                            }
-                            config.set(path + ".block", block);
-                            config.set(path + ".count", 4);
-                            config.set(path + ".biomes", biome == null ? List.of() : List.of(biome));
-                        });
-                        plant(player, project, name, back);
-                    });
+            if (config(project).contains("vegetation." + name)) {
+                throw new IllegalArgumentException("Ya existe vegetación con ese ID.");
+            }
+            if (template != null) {
+                registerPlant(player, project, biome, name, "template", template, back);
+                return;
+            }
+            choosePlantMode(player, project, name, () -> createPlant(player, project, biome, null),
+                    (mode, source) -> registerPlant(player, project, biome, name, mode, source, back));
         });
+    }
+
+    private void registerPlant(Player player, String project, String biome, String name, String mode, String source,
+                               Menus.Action back) throws Exception {
+        verifyPlantTemplate(project, mode, source);
+        menus.projects.editConfig(project, config -> {
+            String path = "vegetation." + name;
+            if (config.contains(path)) {
+                throw new IllegalArgumentException("Ya existe vegetación con ese ID.");
+            }
+            if (biome != null) {
+                requireBiome(config, biome);
+            }
+            ConfigurationSection entry = config.createSection(path);
+            setPlantSource(entry, mode, source);
+            entry.set("count", 4);
+            entry.set("biomes", biome == null ? List.of() : List.of(biome));
+        });
+        plant(player, project, name, back);
+    }
+
+    private void choosePlantMode(Player player, String project, String name, Menus.Action back, PlantSource picked) {
+        Menus.Action reopen = () -> choosePlantMode(player, project, name, back, picked);
+        Menus.View view = menus.menu(player, "Modo de vegetación · " + name);
+        view.button(20, Material.POPPY, "Bloque vanilla", () ->
+                choosePlantBlock(player, "Bloque para " + name, "minecraft:blue_orchid", reopen,
+                        block -> picked.select("block", block)),
+                "Flores, pasto, hongos y otros bloques del juego.");
+        view.button(24, Material.STRUCTURE_BLOCK, "Plantilla capturada", () ->
+                choosePlantTemplate(player, project, name, reopen, template -> picked.select("template", template)),
+                "Usá los bloques de una plantilla guardada en el catálogo del proyecto.");
+        view.button(49, Material.ARROW, "Volver", back);
+        view.open();
+    }
+
+    private void choosePlantTemplate(Player player, String project, String name, Menus.Action back, Menus.Answer picked)
+            throws Exception {
+        YamlConfiguration config = config(project);
+        List<String> saved = menus.projects.listTemplates(project);
+        if (saved.isEmpty()) {
+            Menus.View view = menus.menu(player, "Plantilla para " + name);
+            view.button(22, Material.PAPER, "El catálogo está vacío", () -> {},
+                    "Volvé al catálogo y capturá una plantilla para usarla como vegetación.");
+            view.button(49, Material.ARROW, "Volver", back);
+            view.open();
+            return;
+        }
+        menus.choose(player, "Plantilla para " + name, saved, template -> template,
+                template -> kind(config, template).icon, back, picked::accept,
+                template -> templateLore(config, project, null, template));
+    }
+
+    private void changePlantSource(String project, String name, String mode, String source, Menus.Action back) throws Exception {
+        verifyPlantTemplate(project, mode, source);
+        menus.projects.editConfig(project, config -> setPlantSource(requirePlant(config, name), mode, source));
+        back.run();
+    }
+
+    private void verifyPlantTemplate(String project, String mode, String source) throws Exception {
+        if (mode.equals("template") && !menus.projects.listTemplates(project).contains(source)) {
+            throw new IllegalArgumentException("La plantilla ya no existe en el catálogo del proyecto.");
+        }
+    }
+
+    private static void setPlantSource(ConfigurationSection entry, String mode, String source) {
+        boolean template = mode.equals("template");
+        entry.set("mode", mode);
+        entry.set("template", template ? source : null);
+        entry.set("block", template ? null : source);
+        entry.set(template ? "support" : "allow-void", null);
     }
 
     private void plant(Player player, String project, String name, Menus.Action back) throws Exception {
         YamlConfiguration config = config(project);
         String path = "vegetation." + name;
-        ConfigurationSection entry = config.getConfigurationSection(path);
-        if (entry == null) {
-            throw new IllegalArgumentException("Ese elemento de vegetación ya no existe.");
-        }
+        ConfigurationSection entry = requirePlant(config, name);
+        boolean template = isPlantTemplate(entry);
         String block = entry.getString("block", "minecraft:blue_orchid");
+        String templateName = entry.getString("template", "sin plantilla");
         int count = entry.getInt("count", 4);
         String heightmap = entry.getString("heightmap", "surface");
         String substrate = substrateLabel(entry);
         List<String> biomes = plantBiomes(config, project, name);
         Menus.Action reopen = () -> plant(player, project, name, back);
         Menus.View view = menus.menu(player, "Vegetación · " + name);
-        view.button(10, plantIcon(config, name), "Bloque: " + shortBlock(block), () ->
-                choosePlantBlock(player, "Bloque para " + name, block, reopen,
-                        value -> set(project, path + ".block", value, reopen)));
+        view.button(4, Material.COMPASS, "Modo: " + (template ? "Plantilla capturada" : "Bloque vanilla"), () ->
+                choosePlantMode(player, project, name, reopen,
+                        (mode, source) -> changePlantSource(project, name, mode, source, reopen)),
+                "Cambiá el tipo y elegí lo que se coloca. Se conservan los biomas, los intentos y la altura.");
+        if (template) {
+            view.button(10, plantIcon(config, name), "Plantilla: " + templateName, () ->
+                    choosePlantTemplate(player, project, name, reopen,
+                            value -> changePlantSource(project, name, "template", value, reopen)));
+            boolean allowVoid = entry.getBoolean("allow-void");
+            view.button(29, Material.GLASS, "Permitir vacío: " + enabled(allowVoid), () ->
+                    set(project, path + ".allow-void", !allowVoid, reopen),
+                    "Permite colocar la base aunque no haya un bloque sólido debajo.",
+                    "Se conserva cualquier filtro de bloques de apoyo que hayas indicado.");
+        } else {
+            view.button(10, plantIcon(config, name), "Bloque: " + shortBlock(block), () ->
+                    choosePlantBlock(player, "Bloque para " + name, block, reopen,
+                            value -> changePlantSource(project, name, "block", value, reopen)),
+                    shortBlock(block).equals("sea_pickle") ? "Para colocarlo en seco, usá Superficie y Cualquier apoyo."
+                            : "Elegí cualquier bloque vanilla de la lista o escribí su ID.");
+            boolean vanilla = entry.getString("support", "any").equals("vanilla");
+            view.button(29, Material.FARMLAND, "Soporte: " + (vanilla ? "Reglas vanilla" : "Cualquier apoyo"), () ->
+                    set(project, path + ".support", vanilla ? "any" : "vanilla", reopen),
+                    "Reglas vanilla respeta la supervivencia normal de la planta al generarla.",
+                    "Cualquier apoyo permite generarla sobre cualquier bloque sólido con apoyo automático.",
+                    "Un filtro de bloques de apoyo se aplica en cualquiera de los dos modos.");
+        }
         view.button(12, Material.BONE_MEAL, "Intentos por chunk: " + count, () -> menus.input(player,
                 "Escribí un valor de 1 a 128.", Integer.toString(count), reopen,
                 value -> set(project, path + ".count", whole(value, 1, 128), reopen)),
-                "El bloque aparece si el terreno permite colocarlo.");
+                "La vegetación aparece donde se cumplan las reglas que configuraste.");
         view.button(14, Material.DIRT, "Bloques de apoyo", () -> menus.input(player,
                 "Escribí bloques de apoyo separados por comas, o auto.", substrate, reopen,
                 value -> set(project, path + ".substrate", substrates(value), reopen)),
-                substrate.equals("auto") ? "Cualquier bloque sólido compatible." : substrate);
+                substrate.equals("auto") ? automaticSubstrate(entry) : substrate);
         view.button(16, Material.FEATHER, "Altura: " + heightLabel(heightmap), () ->
                 menus.choose(player, "Altura de vegetación", List.of("surface", "ocean_floor"),
                         CatalogMenus::heightLabel, CatalogMenus::heightIcon, reopen,
                         value -> set(project, path + ".heightmap", value, reopen)),
-                "El bloque necesita que el lugar elegido sea apto para crecer.");
+                "Superficie coloca en seco. Fondo permite plantas acuáticas bajo el agua.");
         view.button(22, Material.GRASS_BLOCK, "Biomas · " + biomes.size(),
-                () -> plantBiomeList(player, project, name, reopen), "Sin biomas, el elemento queda guardado en el catálogo.");
+                () -> plantBiomeList(player, project, name, reopen),
+                biomeSummary(biomes));
         view.button(43, Material.BARRIER, "Quitar vegetación", () -> menus.confirm(player, "Quitar · " + name,
                 reopen, () -> set(project, path, null, back), "Va a desaparecer del catálogo y de los biomas donde la usás."));
         view.button(49, Material.ARROW, "Volver", back);
@@ -500,10 +806,7 @@ final class CatalogMenus {
     private void setPlantBiome(String project, String name, String biome, boolean attach) throws Exception {
         menus.projects.editConfig(project, config -> {
             requireBiome(config, biome);
-            String path = "vegetation." + name;
-            if (!config.isConfigurationSection(path)) {
-                throw new IllegalArgumentException("Ese elemento de vegetación ya no existe.");
-            }
+            ConfigurationSection entry = requirePlant(config, name);
             List<String> targets = plantBiomes(config, project, name);
             if (attach) {
                 if (!targets.contains(biome)) {
@@ -512,7 +815,7 @@ final class CatalogMenus {
             } else {
                 targets.remove(biome);
             }
-            config.set(path + ".biomes", targets);
+            entry.set("biomes", targets);
         });
     }
 
@@ -570,7 +873,8 @@ final class CatalogMenus {
     }
 
     private static List<String> plants(YamlConfiguration config, String project, String biome) {
-        return keys(config, "vegetation").stream().filter(name -> biome == null || plantBiomes(config, project, name).contains(biome)).toList();
+        return keys(config, "vegetation").stream().filter(name -> config.isConfigurationSection("vegetation." + name))
+                .filter(name -> biome == null || plantBiomes(config, project, name).contains(biome)).toList();
     }
 
     private static List<String> plantBiomes(YamlConfiguration config, String project, String name) {
@@ -578,8 +882,91 @@ final class CatalogMenus {
     }
 
     private static Material plantIcon(YamlConfiguration config, String name) {
-        Material material = Material.matchMaterial(config.getString("vegetation." + name + ".block", "blue_orchid"));
+        ConfigurationSection entry = requirePlant(config, name);
+        if (isPlantTemplate(entry)) {
+            return kind(config, entry.getString("template", "sin_plantilla")).icon;
+        }
+        Material material = Material.matchMaterial(entry.getString("block", "blue_orchid"));
         return material != null && !material.isLegacy() && material.isItem() && !material.isAir() ? material : Material.BONE_MEAL;
+    }
+
+    private static boolean isPlantTemplate(ConfigurationSection entry) {
+        return entry.getString("mode", "block").equals("template");
+    }
+
+    private static ConfigurationSection requirePlant(YamlConfiguration config, String name) {
+        ConfigurationSection entry = config.getConfigurationSection("vegetation." + name);
+        if (entry == null) {
+            throw new IllegalArgumentException("Ese elemento de vegetación ya no existe.");
+        }
+        return entry;
+    }
+
+    private static List<String> plantLore(YamlConfiguration config, String project, String name) {
+        ConfigurationSection entry = requirePlant(config, name);
+        boolean template = isPlantTemplate(entry);
+        List<String> targets = plantBiomes(config, project, name);
+        String source = template ? "Plantilla: " + entry.getString("template", "sin plantilla")
+                : "Bloque: " + shortBlock(entry.getString("block", "sin bloque"));
+        String support = template ? "Permite vacío: " + enabled(entry.getBoolean("allow-void"))
+                : "Soporte: " + (entry.getString("support", "any").equals("vanilla") ? "reglas vanilla" : "cualquier apoyo");
+        String substrate = substrateLabel(entry);
+        return List.of(source, entry.getInt("count", 4) + " intentos por chunk · " + heightLabel(entry.getString("heightmap", "surface")),
+                support, "Bloques de apoyo: " + (substrate.equals("auto") ? automaticSubstrate(entry) : substrate), biomeSummary(targets));
+    }
+
+    private static List<String> templateLore(YamlConfiguration config, String project, String biome, String name) {
+        List<String> lore = new ArrayList<>();
+        lore.add("Categoría: " + kind(config, name).label);
+        List<String> uses = new ArrayList<>();
+        for (String group : groups(config, project, biome)) {
+            Integer weight = variants(requireGroup(config, group), group).get(name);
+            if (weight != null) {
+                uses.add(group + " (peso " + weight + ")");
+            }
+        }
+        lore.add(uses.isEmpty() ? "Sin grupos en esta vista." : "Grupos: " + summarize(uses));
+        List<String> vegetation = plants(config, project, biome).stream().filter(plant -> {
+            ConfigurationSection entry = requirePlant(config, plant);
+            return isPlantTemplate(entry) && name.equals(entry.getString("template"));
+        }).toList();
+        if (!vegetation.isEmpty()) {
+            lore.add("Vegetación: " + summarize(vegetation));
+        }
+        return lore;
+    }
+
+    private static List<String> groupLore(YamlConfiguration config, String project, String id) {
+        ConfigurationSection group = requireGroup(config, id);
+        int spacing = group.getInt("spacing", groupKind(group) == Kind.TREE ? 2 : 32);
+        Map<String, Integer> weights = variants(group, id);
+        return List.of(weights.size() + " variantes · " + spacing + " chunks entre intentos",
+                "Plantillas: " + summarize(weights.entrySet().stream().map(variant -> variant.getKey() + " ×" + variant.getValue()).toList()),
+                "Probabilidad: " + group.getDouble("frequency", 1.0), placementSummary(group),
+                attemptsSummary(group.getConfigurationSection("placement")),
+                biomeSummary(groupBiomes(config, project, group)));
+    }
+
+    private static String attemptsSummary(ConfigurationSection rules) {
+        int attempts = rules == null ? 1 : rules.getInt("attempts", 1);
+        return attempts + (attempts == 1 ? " intento" : " intentos") + " por chunk elegible";
+    }
+
+    private static String automaticSubstrate(ConfigurationSection plant) {
+        return isPlantTemplate(plant) && plant.getBoolean("allow-void")
+                ? "Automático: permite vacío." : "Automático: cualquier bloque sólido.";
+    }
+
+    private static String biomeSummary(List<String> targets) {
+        return targets.isEmpty() ? "Sin biomas: guardado en el catálogo." : "Biomas: " + summarize(targets);
+    }
+
+    private static String summarize(List<String> values) {
+        if (values.isEmpty()) {
+            return "ninguna";
+        }
+        String visible = String.join(", ", values.stream().limit(3).toList());
+        return values.size() > 3 ? visible + " y " + (values.size() - 3) + " más" : visible;
     }
 
     private static String substrateLabel(ConfigurationSection entry) {
@@ -646,6 +1033,14 @@ final class CatalogMenus {
         return group;
     }
 
+    private static ConfigurationSection requireNativeGroup(YamlConfiguration config, String id) {
+        ConfigurationSection group = requireGroup(config, id);
+        if (group.contains("placement")) {
+            throw new IllegalArgumentException("El grupo usa el modo combinado. Revisá sus zonas de aparición.");
+        }
+        return group;
+    }
+
     private static void requireBiome(YamlConfiguration config, String biome) {
         if (!config.isConfigurationSection("biomes." + biome)) {
             throw new IllegalArgumentException("Ese bioma ya no existe en el proyecto.");
@@ -701,7 +1096,7 @@ final class CatalogMenus {
 
     private static void checkHeight(String heightmap, int height, int offset) {
         int result = offset + (heightmap.equals("fixed") ? height : 0);
-        if (result < -2032 || result > 2031) {
+        if (result < MIN_Y || result > MAX_Y) {
             throw new IllegalArgumentException("La altura fija más el desplazamiento tiene que quedar entre -2032 y 2031.");
         }
     }
@@ -729,6 +1124,11 @@ final class CatalogMenus {
             case "beard_box" -> "Relleno bajo toda la base";
             default -> "Ninguno";
         };
+    }
+
+    @FunctionalInterface
+    private interface PlantSource {
+        void select(String mode, String source) throws Exception;
     }
 
     private enum Kind {

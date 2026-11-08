@@ -1,10 +1,10 @@
-# MDVGenerator
+# MDVDimensions
 
 Plugin para **Purpur 1.21.6** que te deja diseñar biomas, guardar construcciones y configurar la generación desde menús dentro de Minecraft. Cada proyecto tiene su catálogo y exporta un datapack propio. Podés instalar varios a la vez y acceder a sus dimensiones con **Multiverse-Core 5.7.3**.
 
 ## Compilar e instalar
 
-**En GitHub.** Subí al repositorio el contenido de la carpeta del proyecto, incluida `.github`. En **Actions → Compilar plugin**, elegí **Run workflow**. Cuando termine, descargá el artefacto **MDVGenerator** y extraé `MDVGenerator-2.0.0.jar`.
+**En GitHub.** Subí al repositorio el contenido de la carpeta del proyecto, incluida `.github`. En **Actions → Compilar plugin**, elegí **Run workflow**. Cuando termine, descargá el artefacto **MDVDimensions** y extraé `MDVDimensions-2.1.0.jar`.
 
 **En tu computadora.** Con JDK 21 y Maven, ejecutá este comando desde la carpeta que contiene `pom.xml`.
 
@@ -12,21 +12,21 @@ Plugin para **Purpur 1.21.6** que te deja diseñar biomas, guardar construccione
 mvn -B clean verify
 ~~~
 
-El JAR queda en `target/MDVGenerator-2.0.0.jar`. Copialo a `plugins/` y reiniciá el servidor. Los operadores tienen acceso por defecto. Para habilitar el editor a otro administrador, asignale `mdvgenerator.admin`. Los permisos existentes `generamundos.admin` siguen siendo válidos.
+El JAR queda en `target/MDVDimensions-2.1.0.jar`. Copialo a `plugins/` y reiniciá el servidor. Los operadores tienen acceso por defecto. Para habilitar el editor a otro administrador, asignale `mdvdimensions.admin`. También se aceptan los permisos anteriores `mdvgenerator.admin` y `generamundos.admin`.
 
-### Si ya usabas GeneraMundos
+### Si ya usabas MDVGenerator o GeneraMundos
 
 1. Apagá el servidor y hacé una copia de seguridad.
-2. Retirá únicamente el JAR anterior de `plugins/` y poné `MDVGenerator-2.0.0.jar` en su lugar. Conservá la carpeta `plugins/GeneraMundos/`.
-3. Arrancá el servidor. MDVGenerator copia cada proyecto y sus plantillas a `plugins/MDVGenerator/proyectos/` si todavía no existen ahí. Las copias y exportaciones anteriores siguen en `plugins/GeneraMundos/`.
-4. Abrí `/mdv` y elegí el proyecto importado. Su dimensión sigue siendo `gm_<proyecto>:world` y el ZIP conserva el nombre `gm_<proyecto>.zip`. Los datapacks instalados siguen activos. Si querés que una nueva exportación conserve los mobs naturales que heredabas del bioma vanilla, habilitá **Mobs heredados** en ese bioma.
+2. Retirá los JAR de las versiones anteriores de `plugins/` y poné `MDVDimensions-2.1.0.jar`. Conservá las carpetas `plugins/MDVGenerator/` y `plugins/GeneraMundos/` que existan.
+3. Arrancá el servidor. El plugin copia los proyectos con su `generacion.yml` y sus plantillas NBT a `plugins/MDVDimensions/proyectos/`. Busca primero en MDVGenerator y después en GeneraMundos. Si un proyecto ya existe en la carpeta nueva, conserva esa copia. Las exportaciones y copias de seguridad anteriores quedan en sus carpetas originales.
+4. Abrí `/dim` y elegí el proyecto importado. Su dimensión sigue siendo `gm_<proyecto>:world` y el ZIP conserva el nombre `gm_<proyecto>.zip`. Los datapacks instalados siguen activos. Si migrás desde GeneraMundos y querés que una nueva exportación conserve los mobs que heredabas del bioma vanilla, habilitá **Mobs heredados** en ese bioma.
 
 ## Crear y probar un mundo desde el juego
 
-1. Abrí **`/mdv` → Crear proyecto** y escribí un ID como `arena_volcanica`. El proyecto inicial trae un bioma, `bosque_umbrio`. Usalo como punto de partida o agregá otros desde **Biomas → Crear bioma**. Podés darle un nombre visible en el menú, como **Arena volcánica**, y elegir su base vanilla. El ID es la clave que se registra en Minecraft.
+1. Abrí **`/dim` → Crear proyecto** y escribí un ID como `arena_volcanica`. El proyecto inicial trae un bioma, `bosque_umbrio`. Usalo como punto de partida o agregá otros desde **Biomas → Crear bioma**. Podés darle un nombre visible en el menú, como **Arena volcánica**, y elegir su esencia vanilla. El ID es la clave que se registra en Minecraft.
 2. En **Mundo**, elegí el terreno base, el ambiente visual y las reglas de dimensión. Por ejemplo, combiná islas flotantes con cielo del End y camas habilitadas. En **Biomas → tu bioma**, definí sus capas, colores, clima, relieve preferido y mobs naturales.
-3. Para guardar un árbol o una construcción, sacá la **Herramienta de selección** del menú del proyecto. Marcá los bloques de las dos esquinas opuestas con clic izquierdo y derecho. Volvé con `/mdv` y abrí **Biomas → tu bioma → Árboles y estructuras → Capturar una plantilla**. Elegí la categoría y guardala con un ID como `sauce_01`. Si capturás desde el catálogo general, agregá la plantilla a un grupo de aparición y elegí sus biomas.
-4. Volvé al proyecto, elegí **Validar** y después **Instalar datapack**. **Exportar ZIP** sirve si preferís copiar el datapack a mano. Cuando ingreses texto o números, podés usar el chat o `/mdv entrada <valor>`. `/mdv cancelar` vuelve al menú anterior.
+3. Para guardar un árbol o una construcción, sacá la **Herramienta de selección** del menú del proyecto. Marcá los bloques de las dos esquinas opuestas con clic izquierdo y derecho. Volvé con `/dim` y abrí **Biomas → tu bioma → Árboles y estructuras → Capturar una plantilla**. Elegí la categoría y guardala con un ID como `sauce_01`. Si capturás desde el catálogo general, agregá la plantilla a un grupo de aparición y elegí sus biomas.
+4. Volvé al proyecto, elegí **Validar** y después **Instalar datapack**. **Exportar ZIP** sirve si preferís copiar el datapack a mano. Cuando ingreses texto o números, podés usar el chat o `/dim entrada <valor>`. `/dim cancelar` vuelve al menú anterior.
 5. Reiniciá el servidor completo. Usá `/mv list` y `/mv tp <nombre>` con el nombre exacto que muestre Multiverse. La clave de Minecraft para este ejemplo es `gm_arena_volcanica:world`.
 
 Purpur carga la dimensión desde el datapack al arrancar. Multiverse-Core 5.7.3 registra el mundo cargado si `world.auto-import-3rd-party-worlds` está habilitado en `plugins/Multiverse-Core/config.yml`. Si el mundo falta en `/mv list`, probá `/execute in gm_arena_volcanica:world run time query daytime` para verificar si Minecraft lo cargó. Con Multiverse-Core 5.1.1 se observó que Purpur cargaba la dimensión pero Multiverse fallaba al registrarla. [Multiverse-Core 5.7.3](https://modrinth.com/plugin/multiverse-core/version/5.7.3) · [Datapacks y Multiverse](https://mvplugins.org/core/reference/faq/) · [Configuración de Multiverse](https://mvplugins.org/core/reference/configuration-file/)
@@ -69,7 +69,7 @@ Para enlazar el mundo con un portal, configurá su destino con Multiverse-Portal
 
 ## Configurar biomas
 
-- **Base y nombre.** El bioma base aporta clima, decoración y rasgos de Minecraft. **Nombre en el menú** solo cambia la etiqueta del editor. Por ejemplo, `bosque_umbrio` en el proyecto `arena_volcanica` se registra como `gm_arena_volcanica:bosque_umbrio`.
+- **Base y nombre.** **Bioma base · esencia** abre las 65 bases vanilla de Java 1.21.6. Pasá el cursor por cada una para ver ambiente, suelo típico, vegetación, temperatura, humedad y precipitación. **Buscar** encuentra nombres, alias e IDs. Por ejemplo, buscá `manglar`, `mangrove swamp` o `minecraft:mangrove_swamp`. El bioma base aporta clima, decoración y rasgos de Minecraft. **Nombre en el menú** cambia la etiqueta del editor. Por ejemplo, `bosque_umbrio` en el proyecto `arena_volcanica` se registra como `gm_arena_volcanica:bosque_umbrio`.
 - **Relieve preferido.** Montañas, colinas, llanuras, costas y océanos orientan la ubicación del bioma en terrenos `overworld`, `large_biomes` y `amplified`. El ajuste selecciona zonas a partir de las señales de terreno, así que los bordes pueden mezclarse. Con un solo bioma, ese bioma ocupa todo el mundo. Agregá otro y dejalo con **Cualquier relieve** si querés una alternativa para otras zonas.
 - **Clima y ubicación.** Temperatura local, humedad y lluvia o nieve describen el bioma donde estás. **Ubicación en el generador** usa temperatura, humedad, continentalidad, erosión, profundidad y rareza para decidir dónde puede aparecer. Podés dar un valor entre −2 y 2 o un rango ordenado como `-0,5 0,5`. Desplazamiento acepta un solo valor de 0 a 1. Las señales disponibles dependen del terreno. Por ejemplo, continentalidad ayuda a distinguir costa e interior en el Overworld.
 - **Colores.** Configurá cielo, niebla, agua, niebla submarina, pasto o follaje con un código como `#55486e`. El ambiente y las reglas del cliente determinan qué colores se ven en cada dimensión.
@@ -78,27 +78,45 @@ Para enlazar el mundo con un portal, configurá su destino con Multiverse-Portal
 
 Para revisar la distribución, probá `/execute in gm_arena_volcanica:world run locate biome gm_arena_volcanica:bosque_umbrio` después del reinicio. Usá un ID de bioma que exista en el proyecto.
 
+En la lista de biomas y en sus menús, pasá el cursor sobre las opciones para revisar los valores actuales, como el relieve, el clima, las capas, los colores y los mobs. Los valores heredados se indican donde podés modificarlos.
+
 ## Catálogo, variantes y aparición
 
-El **Catálogo** separa árboles, construcciones, vegetación de un bloque y otros elementos. Podés guardar una plantilla, usarla en distintos biomas, copiarla a otro proyecto y actualizar su captura sin cambiar el ID. Cuando una plantilla se captura desde un bioma, se registra también un grupo de aparición para ese bioma.
+El **Catálogo** separa árboles, construcciones, vegetación y otros elementos. Podés guardar una plantilla, usarla en distintos biomas, copiarla a otro proyecto y actualizar su captura sin cambiar el ID. Cuando una plantilla se captura desde un bioma, se registra también un grupo de aparición para ese bioma.
 
 **Grupos de aparición** reúne variantes que comparten frecuencia, altura y biomas. Por ejemplo, un grupo puede contener `sauce_01` con peso 3 y `sauce_02` con peso 1. Cuando el juego elige un sauce, la primera variante pesa tres veces más. Sumá la variante nueva al grupo y revisá sus otros grupos para que aparezca donde querés.
 
 - **Distancia y probabilidad.** Distancia es el tamaño en chunks de la zona donde se busca una posición. Separación tiene que ser menor que la distancia. La probabilidad admite de 0 a 1 y filtra candidatos. Para árboles más juntos, probá una distancia baja. Para una ruina aislada, subila.
-- **Altura.** Podés seguir la superficie, usar el fondo oceánico o fijar una altura. El desplazamiento vertical levanta la plantilla si es positivo y la hunde si es negativo. En cavernas o Nether, la superficie puede ser el techo. Probá una altura fija para estructuras subterráneas.
+- **Altura.** En el modo nativo podés seguir la superficie, usar el fondo oceánico o fijar una altura. El desplazamiento vertical levanta la plantilla si es positivo y la hunde si es negativo. En cavernas o Nether, la superficie puede ser el techo.
 - **Terreno y aire.** Ajustá la adaptación del terreno si querés que una construcción se integre al suelo. **Conservar el terreno en huecos** mantiene los bloques donde tu selección tenía aire. Desactivalo para despejar el interior de una estructura cuando atraviesa terreno.
 - **Selección.** El volumen incluye ambas esquinas y admite hasta 48 bloques por eje. Mantené cargados todos los chunks de la selección. Su cara inferior será la base de la plantilla. Activá entidades para conservar elementos como soportes para armaduras. Los bloques y sus datos, como los datos de cofres, se guardan siempre.
-- **Vegetación de un bloque.** Desde el catálogo creá una planta, elegí su bloque, ajustá intentos por chunk, biomas y bloques de apoyo. La altura puede seguir la superficie o el fondo oceánico. Los intentos pueden fallar si el terreno elegido no admite el bloque.
 
-En 1.21.6 las plantillas de árboles usan la colocación de estructuras. Pueden rotar y su densidad depende de las oportunidades de aparición por zona. Para un bosque más tupido, agrupá varios árboles en una plantilla o combiná tus variantes con la vegetación del bioma base. Para localizar una construcción usá el ID del grupo, por ejemplo `/execute in gm_arena_volcanica:world run locate structure gm_arena_volcanica:ruina_01`.
+En 1.21.6 los grupos de árboles en modo nativo usan la colocación de estructuras. Pueden rotar y su densidad depende de las oportunidades de aparición por zona. Para localizar una estructura nativa usá el ID del grupo, por ejemplo `/execute in gm_arena_volcanica:world run locate structure gm_arena_volcanica:ruina_01`.
+
+### Combinar zonas de aparición
+
+En **Catálogo → Grupos de aparición → tu grupo → Zonas de aparición**, podés activar al mismo tiempo **Superficie**, **Fondo oceánico**, **Altura fija**, **Rango de alturas** y **Profundidad**. Por ejemplo, dejá Superficie activa y escribí `-20` en Altura fija para permitir ambas colocaciones. Podés ingresar `-40 10` para un rango de coordenadas Y o `6 18` para generar entre 6 y 18 bloques debajo de la superficie. En Profundidad, el 0 corresponde al bloque justo encima de la superficie.
+
+El modo combinado se activa con el primer cambio en ese menú. Antes, dejá **Ajuste del terreno** en **Ninguno**. Cada zona activa puede producir una colocación por intento, si el bioma y la altura cumplen las condiciones. **Permitir vacío** deja que la plantilla se coloque sin un bloque sólido debajo del punto de anclaje. Desactivá las alturas o rangos escribiendo `desactivar` y conservá al menos una zona activa.
+
+Para varios árboles por chunk, elegí **Distancia 1**, **Separación 0** y configurá **Intentos por chunk** dentro de **Zonas de aparición**. Con un intento se usa el centro. Con 2 a 16 se prueban posiciones distintas. El terreno y el espacio disponible pueden reducir el número de colocaciones.
+
+Los grupos combinados y la vegetación de plantilla requieren MDVDimensions instalado en el servidor que genera el mundo. Las nuevas apariciones combinadas quedan fuera del índice de `/locate structure`. El ZIP conserva los registros nativos de los grupos existentes para que Minecraft siga leyendo las referencias de los chunks anteriores. Los grupos que siguen en modo nativo continúan generándose desde el datapack.
+
+### Colocar plantas, bloques y plantillas
+
+En **Catálogo → Crear vegetación**, elegí **Bloque vanilla** o **Plantilla capturada**. Para una plantilla, también podés abrirla en el catálogo y usar **Usar como vegetación**. Ajustá los biomas, la altura, los bloques de apoyo y los **Intentos por chunk** de 1 a 128. El número marca intentos, así que la cantidad final depende del terreno que los reciba.
+
+- **Bloque vanilla.** Elegí un bloque del listado, buscalo por ID o escribilo. **Reglas vanilla** comprueba que la planta pueda sobrevivir en el punto elegido. **Cualquier apoyo** omite esa comprobación inicial y conserva el filtro de bloques de apoyo que elijas. Con apoyo automático, el bloque de abajo debe ser sólido. Para un pepino de mar seco, elegí `minecraft:sea_pickle`, **Superficie** y **Cualquier apoyo**. Usá **Fondo oceánico** si querés colocarlo bajo el agua. Los cambios posteriores de bloques siguen las reglas de Minecraft.
+- **Plantilla capturada.** Elegí un NBT guardado en el proyecto, como un arbusto o un árbol que construiste. El generador puede rotarlo. Podés exigir bloques de apoyo específicos o activar **Permitir vacío**. Si especificás una lista de apoyo, se respeta aunque permitas vacío. Para poblar un bosque con tus árboles, podés configurarlos acá como vegetación y aumentar sus intentos por chunk.
 
 ## Actualizar un mundo existente
 
 1. Editá el mismo proyecto. Por ejemplo, capturá una nueva variante de un árbol y agregala al grupo que ya aparece en el mundo. Conservá el ID del proyecto y los IDs de biomas usados por los chunks existentes.
-2. Hacé una copia del mundo y del datapack instalado. Elegí **Validar → Instalar datapack**. El plugin reemplaza el ZIP del proyecto y archiva la versión instalada anterior en `plugins/MDVGenerator/copias/<proyecto>/`.
+2. Hacé una copia del mundo y del datapack instalado. Elegí **Validar → Instalar datapack**. El plugin reemplaza el ZIP del proyecto y archiva la versión instalada anterior en `plugins/MDVDimensions/copias/<proyecto>/`.
 3. Reiniciá el servidor por completo. Entrá al mismo mundo y explorá una zona que nunca se haya generado. Los cambios de colocación y terreno se ven en **chunks nuevos**. Los chunks ya generados, incluso los descargados o pregenerados, mantienen los bloques y las estructuras que tenían. Ajustes de registro como el color de un bioma pueden cambiar cómo se ve un chunk anterior.
 
-Si el servidor tiene abierto el ZIP y no permite reemplazarlo, apagalo y copiá `plugins/MDVGenerator/exportaciones/gm_<proyecto>.zip` a `datapacks/` dentro del mundo principal. Guardá una copia del ZIP anterior antes de reemplazarlo. Conservá el nombre del archivo, los IDs de biomas y los límites verticales. Si restaurás una versión después de generar chunks con biomas nuevos, recuperá juntos el ZIP y el mundo de la misma copia.
+Si el servidor tiene abierto el ZIP y no permite reemplazarlo, apagalo y copiá `plugins/MDVDimensions/exportaciones/gm_<proyecto>.zip` a `datapacks/` dentro del mundo principal. Guardá una copia del ZIP anterior antes de reemplazarlo. Conservá el nombre del archivo, los IDs de biomas y los límites verticales. Si restaurás una versión después de generar chunks con biomas nuevos, recuperá juntos el ZIP y el mundo de la misma copia.
 
 Los cambios de relieve pueden dejar bordes visibles entre terreno viejo y nuevo. La instalación rechaza actualizaciones que eliminan un ID de bioma o cambian los límites verticales (`min_y` o `height`). Para esos cambios, creá otro proyecto. Mantené instalado el datapack mientras exista el mundo que usa sus registros. [Dependencia entre mundos y datapacks de generación](https://mvplugins.org/core/reference/faq/)
 
@@ -106,7 +124,7 @@ Para tener otra generación, volvé a **Proyectos → Crear proyecto**. Cada pro
 
 ## Configuración avanzada y archivos
 
-El editor guarda cambios en `plugins/MDVGenerator/proyectos/<proyecto>/generacion.yml`. Dentro de ese proyecto, `plantillas/` contiene los archivos `.nbt`. Los ZIP exportados quedan en `plugins/MDVGenerator/exportaciones/`.
+El editor guarda cambios en `plugins/MDVDimensions/proyectos/<proyecto>/generacion.yml`. Dentro de ese proyecto, `plantillas/` contiene los archivos `.nbt`. Los ZIP exportados quedan en `plugins/MDVDimensions/exportaciones/`.
 
 Si preferís ajustar YAML, usá espacios para la indentación. Este ejemplo equivale a un bioma volcánico con una paleta de cinco capas, ambiente del End, reglas del Overworld, un tipo de mob y vegetación de un bloque. Ajustá los IDs al proyecto que estás editando. Si agregás un bioma nuevo a un mundo que ya existe, conservá sus entradas anteriores.
 
@@ -153,7 +171,9 @@ biomes:
 
 vegetation:
   flor_lunar:
+    mode: block
     block: minecraft:blue_orchid
+    support: vanilla
     count: 8
     heightmap: surface
     substrate: [minecraft:dirt]
@@ -176,7 +196,8 @@ En este ejemplo, `flor_lunar` solo se coloca sobre tierra. Omití `substrate` pa
 | `biomes.<bioma>.data` | Campos avanzados de la definición vanilla del bioma. |
 | `catalog.<plantilla>.kind` | Tipo de plantilla guardada, `tree`, `building` u `other`. |
 | `structures.<grupo>` | `kind`, `biomes`, `templates`, `spacing`, `separation`, `frequency`, `salt`, `heightmap`, `height`, `height-offset`, `terrain-adaptation` e `ignore-air`. |
-| `vegetation.<elemento>` | `block`, `count`, `heightmap`, `substrate` y `biomes`. |
+| `structures.<grupo>.placement` | Modo combinado con `surface`, `ocean-floor`, `fixed-height`, `min-height` y `max-height`, `min-depth` y `max-depth`, y `allow-void`. |
+| `vegetation.<elemento>` | `mode` admite `block` o `template`. Ajustes comunes `count`, `heightmap`, `substrate` y `biomes`. En modo bloque, elegí `block` y `support` (`any` o `vanilla`). En modo plantilla, indicá `template` y, si lo necesitás, `allow-void`. |
 
 Este ejemplo de grupo presupone que `sauce_01.nbt` y `sauce_02.nbt` ya están en `plantillas/`.
 
@@ -198,20 +219,27 @@ structures:
 
 En `templates`, una lista da el mismo peso a cada variante. Los pesos individuales van de 1 a 150. `heightmap` admite `surface`, `ocean_floor` y `fixed`. `terrain-adaptation` admite `none`, `bury`, `beard_thin` y `beard_box`. Los IDs de proyecto y plantilla admiten hasta 32 caracteres con letras minúsculas, números y guion bajo, empezando por una letra. Los biomas nuevos creados desde el menú admiten también guion medio.
 
+Para habilitar superficie y altura Y −20 en ese mismo grupo, agregá este bloque debajo de `sauces` y dejá `terrain-adaptation: none`. Si querés volver a la colocación nativa, quitá la sección `placement` de ese grupo y volvé a instalar el datapack.
+
+~~~yaml
+    terrain-adaptation: none
+    placement:
+      surface: true
+      fixed-height: -20
+~~~
+
 ## Comandos
 
 | Comando | Uso |
 | --- | --- |
-| `/mdv` | Abre el último proyecto de tu sesión o la lista de proyectos. |
-| `/mdv menu [proyecto]` | Abre la lista o el proyecto indicado. |
-| `/mdv entrada <valor>`, `/mdv cancelar` | Envía el valor pedido por el menú o cancela la entrada. |
-| `/mdv crear <proyecto>`, `/mdv proyectos` | Crea o lista proyectos. |
-| `/mdv pos1`, `/mdv pos2` | Marca los bloques donde están tus pies para seleccionar un volumen. |
-| `/mdv guardar <proyecto> <plantilla> <bioma> <arbol\|estructura\|otro> [--entidades]` | Captura la selección y la asocia al bioma elegido. |
-| `/mdv actualizar <proyecto> <plantilla> [--entidades]` | Vuelve a capturar una plantilla conservando sus grupos. |
-| `/mdv copiar <origen> <plantilla> <destino> <bioma>` | Reutiliza una plantilla en otro proyecto. |
-| `/mdv validar <proyecto>` | Comprueba la configuración del plugin y las referencias. Purpur revisa los datos nativos al arrancar. |
-| `/mdv exportar <proyecto>` | Escribe el ZIP en `exportaciones/`. |
-| `/mdv instalar <proyecto>` | Escribe o reemplaza el ZIP del proyecto en `datapacks/` del mundo principal. Reiniciá después. |
-
-`/gm`, `/mdvgenerator` y `/generamundos` son alias de `/mdv`.
+| `/dim` | Abre el último proyecto de tu sesión o la lista de proyectos. |
+| `/dim menu [proyecto]` | Abre la lista o el proyecto indicado. |
+| `/dim entrada <valor>`, `/dim cancelar` | Envía el valor pedido por el menú o cancela la entrada. |
+| `/dim crear <proyecto>`, `/dim proyectos` | Crea o lista proyectos. |
+| `/dim pos1`, `/dim pos2` | Marca los bloques donde están tus pies para seleccionar un volumen. |
+| `/dim guardar <proyecto> <plantilla> <bioma> <arbol\|estructura\|otro> [--entidades]` | Captura la selección y la asocia al bioma elegido. |
+| `/dim actualizar <proyecto> <plantilla> [--entidades]` | Vuelve a capturar una plantilla conservando sus grupos. |
+| `/dim copiar <origen> <plantilla> <destino> <bioma>` | Reutiliza una plantilla en otro proyecto. |
+| `/dim validar <proyecto>` | Comprueba la configuración del plugin y las referencias. Purpur revisa los datos nativos al arrancar. |
+| `/dim exportar <proyecto>` | Escribe el ZIP en `exportaciones/`. |
+| `/dim instalar <proyecto>` | Escribe o reemplaza el ZIP del proyecto en `datapacks/` del mundo principal. Reiniciá después. |

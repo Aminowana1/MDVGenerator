@@ -29,11 +29,11 @@ final class Projects {
     private static final Pattern BIOME_ID = Pattern.compile("[a-z0-9][a-z0-9_-]*");
     private static final String MARKER = "generamundos.proyecto";
 
-    private final MDVGenerator plugin;
+    private final MDVDimensions plugin;
     private final Path data;
     private final Path projects;
 
-    Projects(MDVGenerator plugin) {
+    Projects(MDVDimensions plugin) {
         this.plugin = plugin;
         data = plugin.getDataFolder().toPath();
         projects = data.resolve("proyectos");
@@ -51,8 +51,14 @@ final class Projects {
     }
 
     int migrateLegacy() throws IOException {
-        Path legacy = data.resolveSibling("GeneraMundos");
-        Path oldProjects = legacy.resolve("proyectos");
+        int imported = 0;
+        for (String previous : List.of("MDVGenerator", "GeneraMundos")) {
+            imported += importProjects(data.resolveSibling(previous).resolve("proyectos"));
+        }
+        return imported;
+    }
+
+    private int importProjects(Path oldProjects) throws IOException {
         if (!Files.isDirectory(oldProjects)) {
             return 0;
         }
@@ -121,7 +127,7 @@ final class Projects {
     private Path project(String project) {
         Path path = projects.resolve(id(project));
         if (!Files.isRegularFile(path.resolve("generacion.yml"))) {
-            throw new IllegalArgumentException("El proyecto «" + project + "» no existe. Crealo con /gm crear " + project + ".");
+            throw new IllegalArgumentException("El proyecto «" + project + "» no existe. Crealo con /dim crear " + project + ".");
         }
         return path;
     }
@@ -259,7 +265,7 @@ final class Projects {
         }
         Path path = template(project, name);
         if (Files.exists(path)) {
-            throw new IllegalArgumentException("Ya existe esa plantilla. Usá /mdv actualizar para volver a capturarla.");
+            throw new IllegalArgumentException("Ya existe esa plantilla. Usá /dim actualizar para volver a capturarla.");
         }
         Files.createDirectories(path.getParent());
         config.set("catalog." + name + ".kind", kind);
@@ -342,7 +348,7 @@ final class Projects {
                 {
                   "pack": {
                     "pack_format": 80,
-                    "description": "MDVGenerator - %s"
+                    "description": "MDVDimensions - %s"
                   }
                 }
                 """.formatted(project), StandardCharsets.UTF_8);

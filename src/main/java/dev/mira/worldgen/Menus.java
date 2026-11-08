@@ -43,7 +43,7 @@ final class Menus implements Listener {
 
     final Projects projects;
     final Capture capture;
-    private final MDVGenerator plugin;
+    private final MDVDimensions plugin;
     private final NamespacedKey wandKey;
     private final BiomeMenus biomes;
     private final CatalogMenus catalog;
@@ -51,7 +51,7 @@ final class Menus implements Listener {
     private final Map<UUID, String> recent = new HashMap<>();
     private final Map<UUID, Input> pending = new ConcurrentHashMap<>();
 
-    Menus(MDVGenerator plugin, Projects projects, Capture capture) {
+    Menus(MDVDimensions plugin, Projects projects, Capture capture) {
         this.plugin = plugin;
         this.projects = projects;
         this.capture = capture;
@@ -89,7 +89,7 @@ final class Menus implements Listener {
 
     void projects(Player player) throws Exception {
         List<String> available = projects.list();
-        var view = menu(player, "MDVGenerator · Proyectos");
+        var view = menu(player, "MDVDimensions · Proyectos");
         view.button(11, Material.BOOKSHELF, "Abrir proyecto", () -> choose(player, "Elegí un proyecto", available,
                 Function.identity(), ignored -> Material.MAP, () -> projects(player), id -> project(player, id)),
                 available.size() + " proyecto(s) guardados");
@@ -104,29 +104,38 @@ final class Menus implements Listener {
 
     void project(Player player, String project) throws Exception {
         var config = projects.readConfig(project);
+        var biomeSettings = config.getConfigurationSection("biomes");
+        var placementGroups = config.getConfigurationSection("structures");
+        var vegetation = config.getConfigurationSection("vegetation");
         recent.put(player.getUniqueId(), project);
-        var view = menu(player, "MDVGenerator · " + project);
+        var view = menu(player, "MDVDimensions · " + project);
         view.button(10, Material.FILLED_MAP, "Biomas", () -> biomes.list(player, project),
+                (biomeSettings == null ? 0 : biomeSettings.getKeys(false).size()) + " bioma(s) configurados",
                 "Base vanilla, clima, relieve, capas y criaturas");
         view.button(13, Material.COMPASS, "Mundo", () -> biomes.world(player, project),
-                "Forma del terreno, cielo, reglas y bloques base");
+                "Terreno: " + config.getString("world.terrain", "overworld"),
+                "Cielo: " + config.getString("world.environment", "overworld"),
+                "Reglas: " + config.getString("world.rules", "según el cielo"));
         view.button(16, Material.CHEST, "Catálogo", () -> catalog(player, project, null),
+                projects.listTemplates(project).size() + " plantilla(s)",
+                (vegetation == null ? 0 : vegetation.getKeys(false).size()) + " elemento(s) de flora",
+                (placementGroups == null ? 0 : placementGroups.getKeys(false).size()) + " grupo(s) de aparición",
                 "Árboles, estructuras, vegetación y otros elementos");
         view.button(22, Material.WOODEN_AXE, "Herramienta de selección", () -> selector(player),
                 "Marcá los dos extremos antes de capturar una plantilla.");
         view.button(29, Material.SPYGLASS, "Validar", () -> {
             projects.validate(project);
-            player.sendMessage("MDVGenerator · La configuración está lista para exportar.");
+            player.sendMessage("MDVDimensions · La configuración está lista para exportar.");
         }, "Comprueba la configuración y las plantillas.");
         view.button(31, Material.WRITABLE_BOOK, "Exportar ZIP", () -> {
             var path = projects.export(project);
-            player.sendMessage("MDVGenerator · ZIP exportado a " + path + ".");
+            player.sendMessage("MDVDimensions · ZIP exportado a " + path + ".");
         }, "Guardá un datapack listo para instalar.");
         view.button(33, Material.ENDER_CHEST, "Instalar datapack", () -> confirm(player, "Instalar " + project,
                 () -> project(player, project), () -> {
                     var datapacks = plugin.getServer().getWorlds().getFirst().getWorldFolder().toPath().resolve("datapacks");
                     var path = projects.install(project, datapacks);
-                    player.sendMessage("MDVGenerator · Instalado en " + path + ". Reiniciá el servidor.");
+                    player.sendMessage("MDVDimensions · Instalado en " + path + ". Reiniciá el servidor.");
                     project(player, project);
                 }, "Reemplaza el ZIP de este proyecto y guarda una copia del anterior.",
                 "Dimensión: " + Projects.namespace(project) + ":world"));
@@ -190,20 +199,28 @@ final class Menus implements Listener {
 
     <T> void choose(Player player, String title, List<T> entries, Function<T, String> label,
                     Function<T, Material> icon, Action back, Choice<T> picked) {
-        page(player, title, List.copyOf(entries), label, icon, back, picked, "", 0);
+        choose(player, title, entries, label, icon, back, picked, ignored -> List.of());
+    }
+
+    <T> void choose(Player player, String title, List<T> entries, Function<T, String> label,
+                    Function<T, Material> icon, Action back, Choice<T> picked, Function<T, List<String>> lore) {
+        page(player, title, List.copyOf(entries), label, icon, back, picked, lore, "", 0);
     }
 
     private <T> void page(Player player, String title, List<T> entries, Function<T, String> label,
-                          Function<T, Material> icon, Action back, Choice<T> picked, String filter, int page) {
+                          Function<T, Material> icon, Action back, Choice<T> picked, Function<T, List<String>> lore,
+                          String filter, int page) {
         String query = searchable(filter);
-        var shown = entries.stream().filter(entry -> searchable(label.apply(entry)).contains(query)).toList();
+        var shown = query.isEmpty() ? entries : entries.stream().filter(entry ->
+                searchable(label.apply(entry) + " " + String.join(" ", lore.apply(entry))).contains(query)).toList();
         int pages = Math.max(1, (shown.size() + PAGE_SIZE - 1) / PAGE_SIZE);
         int current = Math.min(page, pages - 1);
         int from = current * PAGE_SIZE;
         var view = menu(player, title);
         for (int index = from; index < Math.min(from + PAGE_SIZE, shown.size()); index++) {
             T entry = shown.get(index);
-            view.button(index - from, icon.apply(entry), label.apply(entry), () -> picked.select(entry));
+            view.button(index - from, icon.apply(entry), label.apply(entry), () -> picked.select(entry),
+                    lore.apply(entry).toArray(String[]::new));
         }
         if (shown.isEmpty()) {
             view.button(22, Material.PAPER, "Sin resultados", () -> {}, "Probá con otro término.");
@@ -211,20 +228,20 @@ final class Menus implements Listener {
         view.button(45, Material.ARROW, "Volver", back);
         if (current > 0) {
             view.button(46, Material.FEATHER, "Página anterior",
-                    () -> page(player, title, entries, label, icon, back, picked, filter, current - 1));
+                    () -> page(player, title, entries, label, icon, back, picked, lore, filter, current - 1));
         }
         view.button(48, Material.SPYGLASS, "Buscar", () -> input(player, "Escribí un término para buscar", filter,
-                () -> page(player, title, entries, label, icon, back, picked, filter, current),
-                text -> page(player, title, entries, label, icon, back, picked, text, 0)));
+                () -> page(player, title, entries, label, icon, back, picked, lore, filter, current),
+                text -> page(player, title, entries, label, icon, back, picked, lore, text, 0)));
         view.button(49, Material.PAPER, "Página " + (current + 1) + " de " + pages, () -> {},
                 shown.size() + " resultado(s)", filter.isBlank() ? "Todos" : "Filtro: " + filter);
         if (!filter.isBlank()) {
             view.button(50, Material.BUCKET, "Limpiar búsqueda",
-                    () -> page(player, title, entries, label, icon, back, picked, "", 0));
+                    () -> page(player, title, entries, label, icon, back, picked, lore, "", 0));
         }
         if (current + 1 < pages) {
             view.button(52, Material.FEATHER, "Página siguiente",
-                    () -> page(player, title, entries, label, icon, back, picked, filter, current + 1));
+                    () -> page(player, title, entries, label, icon, back, picked, lore, filter, current + 1));
         }
         view.open();
     }
@@ -241,19 +258,19 @@ final class Menus implements Listener {
     }
 
     private static void showPrompt(Player player, String prompt, String current) {
-        player.sendMessage(Component.text("MDVGenerator · " + prompt, NamedTextColor.AQUA));
+        player.sendMessage(Component.text("MDVDimensions · " + prompt, NamedTextColor.AQUA));
         if (current != null && !current.isBlank()) {
             String preview = current.length() > 170 ? current.substring(0, 167) + "…" : current;
             player.sendMessage(Component.text("Actual: " + preview, NamedTextColor.GRAY));
         }
-        player.sendMessage(Component.text("Escribí en el chat o usá /mdv entrada <valor>. /mdv cancelar vuelve al menú.",
+        player.sendMessage(Component.text("Escribí en el chat o usá /dim entrada <valor>. /dim cancelar vuelve al menú.",
                 NamedTextColor.GRAY));
     }
 
     void submit(Player player, String text) {
         Input request = pending.get(player.getUniqueId());
         if (request == null) {
-            player.sendMessage("MDVGenerator · Abrí una edición desde /mdv antes de ingresar un valor.");
+            player.sendMessage("MDVDimensions · Abrí una edición desde /dim antes de ingresar un valor.");
             return;
         }
         submit(player, text, request);
@@ -261,18 +278,18 @@ final class Menus implements Listener {
 
     private void submit(Player player, String text, Input request) {
         UUID id = player.getUniqueId();
-        if (!pending.remove(id, request) || !player.isOnline() || !MDVGenerator.hasAccess(player)) {
+        if (!pending.remove(id, request) || !player.isOnline() || !MDVDimensions.hasAccess(player)) {
             return;
         }
         if (System.nanoTime() >= request.expiresAt()) {
-            player.sendMessage("MDVGenerator · La edición venció. Abrila otra vez desde el menú.");
+            player.sendMessage("MDVDimensions · La edición venció. Abrila otra vez desde el menú.");
             run(player, request.back());
             return;
         }
         try {
             request.answer().accept(text.strip());
         } catch (IllegalArgumentException ex) {
-            player.sendMessage("MDVGenerator · " + ex.getMessage());
+            player.sendMessage("MDVDimensions · " + ex.getMessage());
             input(player, request.prompt(), request.current(), request.back(), request.answer());
         } catch (Exception ex) {
             report(player, ex);
@@ -331,14 +348,14 @@ final class Menus implements Listener {
     void selector(Player player) {
         player.closeInventory();
         if (Arrays.stream(player.getInventory().getStorageContents()).noneMatch(this::isSelector)) {
-            var wand = item(Material.WOODEN_AXE, "Selector de MDVGenerator",
-                    "Clic izquierdo: esquina 1", "Clic derecho: esquina 2", "Después abrí /mdv para guardar.");
+            var wand = item(Material.WOODEN_AXE, "Selector de MDVDimensions",
+                    "Clic izquierdo: esquina 1", "Clic derecho: esquina 2", "Después abrí /dim para guardar.");
             wand.editMeta(meta -> meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1));
             if (!player.getInventory().addItem(wand).isEmpty()) {
                 throw new IllegalArgumentException("Liberá un espacio en el inventario para recibir el selector.");
             }
         }
-        player.sendMessage("MDVGenerator · Izquierdo marca la esquina 1, derecho marca la 2. Volvé con /mdv.");
+        player.sendMessage("MDVDimensions · Izquierdo marca la esquina 1, derecho marca la 2. Volvé con /dim.");
     }
 
     private boolean isSelector(ItemStack stack) {
@@ -349,7 +366,7 @@ final class Menus implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onSelect(PlayerInteractEvent event) {
         if (event.getHand() != EquipmentSlot.HAND || event.getClickedBlock() == null
-                || !MDVGenerator.hasAccess(event.getPlayer()) || !isSelector(event.getItem())) {
+                || !MDVDimensions.hasAccess(event.getPlayer()) || !isSelector(event.getItem())) {
             return;
         }
         int corner = switch (event.getAction()) {
@@ -365,12 +382,12 @@ final class Menus implements Listener {
 
     void mark(Player player, int corner, Location location) {
         Location pos = capture.select(player, corner, location);
-        player.sendMessage("MDVGenerator · Esquina " + corner + " en " + pos.getWorld().getName()
+        player.sendMessage("MDVDimensions · Esquina " + corner + " en " + pos.getWorld().getName()
                 + " (" + pos.getBlockX() + ", " + pos.getBlockY() + ", " + pos.getBlockZ() + ").");
     }
 
     void run(Player player, Action action) {
-        if (!player.isOnline() || !MDVGenerator.hasAccess(player)) {
+        if (!player.isOnline() || !MDVDimensions.hasAccess(player)) {
             return;
         }
         try {
@@ -382,12 +399,12 @@ final class Menus implements Listener {
 
     private void report(Player player, Exception ex) {
         if (ex instanceof IllegalArgumentException) {
-            player.sendMessage("MDVGenerator · " + ex.getMessage());
+            player.sendMessage("MDVDimensions · " + ex.getMessage());
         } else if (ex instanceof IOException) {
-            player.sendMessage("MDVGenerator · Error de archivo. Si el ZIP está en uso, reemplazalo con el servidor apagado.");
+            player.sendMessage("MDVDimensions · Error de archivo. Si el ZIP está en uso, reemplazalo con el servidor apagado.");
             plugin.getLogger().log(Level.WARNING, "Error de archivo desde el menú", ex);
         } else {
-            player.sendMessage("MDVGenerator · La acción falló. Revisá la consola.");
+            player.sendMessage("MDVDimensions · La acción falló. Revisá la consola.");
             plugin.getLogger().log(Level.WARNING, "Falló una acción del menú", ex);
         }
     }

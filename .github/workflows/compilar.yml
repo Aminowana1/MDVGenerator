@@ -21,6 +21,6 @@ jobs:
       - run: mvn -B verify
       - uses: actions/upload-artifact@v4
         with:
-          name: MDVGenerator
-          path: target/MDVGenerator-*.jar
+          name: MDVDimensions
+          path: target/MDVDimensions-*.jar
           if-no-files-found: error
