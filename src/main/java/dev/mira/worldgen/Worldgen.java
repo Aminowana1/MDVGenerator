@@ -20,11 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
-import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
-import org.bukkit.Registry;
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.entity.Mob;
 
 public final class Worldgen {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -50,9 +47,13 @@ public final class Worldgen {
             "minecraft:kelp", "minecraft:kelp_plant", "minecraft:sea_pickle", "minecraft:small_dripleaf");
     private static final List<String> AIR_BLOCKS = List.of("minecraft:air", "minecraft:cave_air", "minecraft:void_air");
 
-    private Worldgen() {}
+    private final ExportRegistries registries;
 
-    public static void write(Path packRoot, String namespace, ConfigurationSection config) throws IOException {
+    Worldgen(ExportRegistries registries) {
+        this.registries = registries;
+    }
+
+    void write(Path packRoot, String namespace, ConfigurationSection config) throws IOException {
         validateId(namespace);
         Path data = packRoot.resolve("data").resolve(namespace);
         ConfigurationSection world = requiredSection(config, "world");
@@ -113,6 +114,7 @@ public final class Worldgen {
         boolean weightedSurface = false;
         Set<String> climatePoints = new HashSet<>();
         for (int index = 0; index < biomeIds.size(); index++) {
+            Projects.checkInterrupted();
             String id = validateId(biomeIds.get(index));
             String qualified = namespace + ":" + id;
             ConfigurationSection biome = requiredSection(biomes, id);
@@ -147,9 +149,10 @@ public final class Worldgen {
         var runtimeGroups = new LinkedHashSet<String>();
         var giantIds = new LinkedHashSet<String>();
         var nativeTrees = new LinkedHashSet<String>();
+        var reservedIds = new LinkedHashSet<String>();
         writeStructures(data, namespace, config.getConfigurationSection("structures"), biomeIds,
-                runtimeGroups, giantIds, nativeTrees);
-        RuntimePlacements.export(packRoot, namespace, config, biomeIds, runtimeGroups, giantIds, nativeTrees);
+                runtimeGroups, giantIds, nativeTrees, reservedIds);
+        RuntimePlacements.export(packRoot, namespace, config, biomeIds, runtimeGroups, giantIds, nativeTrees, reservedIds, registries);
     }
 
     private static String biomeBase(ConfigurationSection biome, String terrain) {
@@ -161,7 +164,7 @@ public final class Worldgen {
         return validateId(biome.getString("base", fallback).replaceFirst("^minecraft:", ""));
     }
 
-    private static JsonObject biomeDefinition(ConfigurationSection biome, String base, List<String> vegetation)
+    private JsonObject biomeDefinition(ConfigurationSection biome, String base, List<String> vegetation)
             throws IOException {
         JsonObject definition = baseline("worldgen/biome", base);
         applyOverrides(definition, biome.getConfigurationSection("data"));
@@ -202,7 +205,7 @@ public final class Worldgen {
         return definition;
     }
 
-    private static void configureMobs(JsonObject definition, ConfigurationSection biome) {
+    private void configureMobs(JsonObject definition, ConfigurationSection biome) {
         boolean vanilla = bool(biome, "vanilla-mobs", false);
         ConfigurationSection advanced = biome.getConfigurationSection("data");
         if (!vanilla) {
@@ -230,8 +233,7 @@ public final class Worldgen {
             Set<NamespacedKey> seen = new HashSet<>();
             for (String entity : group.getKeys(false)) {
                 NamespacedKey key = NamespacedKey.fromString(entity);
-                var type = key == null ? null : Registry.ENTITY_TYPE.get(key);
-                if (type == null || type.getEntityClass() == null || !Mob.class.isAssignableFrom(type.getEntityClass())) {
+                if (key == null || !registries.mobs().contains(key)) {
                     throw invalid(group, entity, "indicá una criatura válida de Minecraft");
                 }
                 if (!seen.add(key)) {
@@ -247,7 +249,7 @@ public final class Worldgen {
         }
     }
 
-    private static Map<String, List<String>> writeVegetation(Path data, String namespace, ConfigurationSection config,
+    private Map<String, List<String>> writeVegetation(Path data, String namespace, ConfigurationSection config,
             List<String> biomeIds) throws IOException {
         Map<String, List<String>> byBiome = new LinkedHashMap<>();
         ConfigurationSection vegetation = optionalSection(config, "vegetation");
@@ -342,7 +344,7 @@ public final class Worldgen {
         return object("type", "minecraft:matching_blocks", "blocks", blocks, "offset", List.of(0, offsetY, 0));
     }
 
-    private static JsonObject substratePredicate(ConfigurationSection entry) {
+    private JsonObject substratePredicate(ConfigurationSection entry) {
         Object raw = entry.get("substrate");
         if (raw == null || "auto".equals(raw)) {
             return object("type", "minecraft:solid", "offset", List.of(0, -1, 0));
@@ -480,14 +482,14 @@ public final class Worldgen {
         }
     }
 
-    private static Layers layers(ConfigurationSection section, Layers defaults) {
+    private Layers layers(ConfigurationSection section, Layers defaults) {
         return new Layers(palette(section, "surface", defaults.surface()),
                 palette(section, "subsurface", defaults.subsurface()),
                 integer(section, "surface-depth", defaults.surfaceDepth(), 1, 16),
                 integer(section, "subsurface-depth", defaults.subsurfaceDepth(), 0, 64));
     }
 
-    private static List<MaterialShare> palette(ConfigurationSection section, String key, List<MaterialShare> fallback) {
+    private List<MaterialShare> palette(ConfigurationSection section, String key, List<MaterialShare> fallback) {
         Object raw = section.get(key);
         if (raw == null) {
             return fallback;
@@ -635,8 +637,9 @@ public final class Worldgen {
         return object("type", "minecraft:condition", "if_true", test, "then_run", rule);
     }
 
-    private static void writeStructures(Path data, String namespace, ConfigurationSection groups, List<String> biomeIds,
-                                        Set<String> runtimeGroups, Set<String> giantIds, Set<String> nativeTrees) throws IOException {
+    private void writeStructures(Path data, String namespace, ConfigurationSection groups, List<String> biomeIds,
+                                 Set<String> runtimeGroups, Set<String> giantIds, Set<String> nativeTrees,
+                                 Set<String> reservedIds) throws IOException {
         if (groups == null || groups.getKeys(false).isEmpty()) {
             return;
         }
@@ -644,9 +647,11 @@ public final class Worldgen {
         Map<String, CenteredTemplates.Size> sizes = new LinkedHashMap<>();
         Map<String, Integer> widths = new LinkedHashMap<>();
         for (String id : groups.getKeys(false)) {
+            Projects.checkInterrupted();
             ConfigurationSection group = requiredSection(groups, validateId(id));
             int width = 0;
             for (String template : templates(id, group).keySet()) {
+                Projects.checkInterrupted();
                 Path file = templatesFolder.resolve(template + ".nbt");
                 if (!Files.isRegularFile(file)) {
                     throw invalid(group, "templates", "no está guardada la plantilla " + template);
@@ -665,10 +670,12 @@ public final class Worldgen {
         writeJson(data.resolve("worldgen/processor_list/preserve_void.json"), object("processors", List.of(object(
                 "processor_type", "minecraft:block_ignore", "blocks", List.of(blockState("structure_void"))))));
         for (var groupSize : widths.entrySet()) {
+            Projects.checkInterrupted();
             String id = groupSize.getKey();
             ConfigurationSection group = requiredSection(groups, id);
             boolean giant = groupSize.getValue() > NativeFootprints.LOCAL_SPAN;
-            boolean runtime = !giant && group.contains("placement");
+            boolean reserve = bool(group, "reserve-footprint", false);
+            boolean runtime = !giant && !reserve && group.contains("placement");
             if (runtime) {
                 runtimeGroups.add(id);
             }
@@ -676,7 +683,8 @@ public final class Worldgen {
                 throw invalid(group, "templates", "la generación automática con Minecraft admite hasta "
                         + CenteredTemplates.MAX_WIDTH + " bloques de ancho o fondo. Podés guardar y pegar la plantilla entera con /dim pegar");
             }
-            writeStructure(data, namespace, id, group, biomeIds, runtime, giant, giantIds, nativeTrees, groundRequired);
+            writeStructure(data, namespace, id, group, biomeIds, runtime, giant, reserve,
+                    giantIds, nativeTrees, reservedIds, groundRequired);
         }
         if (!groundRequired.isEmpty()) {
             writeJson(data.resolve("tags/worldgen/structure").resolve(NativeGround.TAG + ".json"),
@@ -685,8 +693,8 @@ public final class Worldgen {
     }
 
     private static void writeStructure(Path data, String namespace, String id, ConfigurationSection entry,
-            List<String> biomeIds, boolean runtime, boolean giant, Set<String> giantIds,
-            Set<String> nativeTrees, Set<String> groundRequired) throws IOException {
+            List<String> biomeIds, boolean runtime, boolean giant, boolean reserve, Set<String> giantIds,
+            Set<String> nativeTrees, Set<String> reservedIds, Set<String> groundRequired) throws IOException {
         String qualified = namespace + ":" + id;
         String kind = choice(entry, "kind", "building", List.of("tree", "building", "other"));
         boolean tree = kind.equals("tree");
@@ -711,30 +719,35 @@ public final class Worldgen {
         }
         JsonArray elements = new JsonArray();
         String processor = namespace + (bool(entry, "ignore-air", true) ? ":ignore_air" : ":preserve_void");
+        boolean centered = giant || reserve;
         for (Map.Entry<String, Integer> variant : templates(id, entry).entrySet()) {
+            Projects.checkInterrupted();
             String template = variant.getKey();
-            String reference = giant ? CenteredTemplates.write(data.resolve("structure"), template) : template;
+            String reference = centered ? CenteredTemplates.write(data.resolve("structure"), template) : template;
             elements.add(object("weight", variant.getValue(), "element", object(
                     "element_type", "minecraft:single_pool_element", "location", namespace + ":" + reference,
                     "processors", processor, "projection", "rigid")));
         }
         JsonObject pool = object("fallback", "minecraft:empty", "elements", elements);
         writeJson(data.resolve("worldgen/template_pool").resolve(id + ".json"), pool);
-        List<NativeHeight> heights = giant && placement != null ? nativeHeights(entry, placement, offset)
+        List<NativeHeight> heights = centered && placement != null ? nativeHeights(entry, placement, offset)
                 : List.of(new NativeHeight("principal", heightmap, startHeight + offset, startHeight + offset));
         String adaptation = choice(entry, "terrain-adaptation", "none", List.of("none", "bury", "beard_thin", "beard_box"));
-        boolean requiresGround = giant && placement != null && !bool(placement, "allow-void", false);
+        boolean requiresGround = centered && placement != null && !bool(placement, "allow-void", false);
         for (int index = 0; index < heights.size(); index++) {
             NativeHeight mode = heights.get(index);
             String structureId = index == 0 ? id : "mdv_modes/" + id + "/" + mode.id();
             String structureKey = namespace + ":" + structureId;
-            writeStructureMode(data, structureId, structureKey, qualified, targets, namespace, tree, adaptation, giant,
+            writeStructureMode(data, structureId, structureKey, qualified, targets, namespace, tree, adaptation, centered,
                     mode, spacing, separation, frequency, salt);
             if (giant) {
                 giantIds.add(structureKey);
             }
             if (tree && !runtime) {
                 nativeTrees.add(structureKey);
+            }
+            if (reserve) {
+                reservedIds.add(structureKey);
             }
             if (requiresGround) {
                 groundRequired.add(structureKey);
@@ -744,7 +757,7 @@ public final class Worldgen {
 
     private static void writeStructureMode(Path data, String id, String qualified, String pool,
                                            List<String> targets, String namespace, boolean tree, String adaptation,
-                                           boolean giant, NativeHeight height, int spacing, int separation,
+                                           boolean centered, NativeHeight height, int spacing, int separation,
                                            double frequency, int salt) throws IOException {
         JsonObject startHeight = height.min() == height.max() ? object("absolute", height.min())
                 : object("type", "minecraft:uniform", "min_inclusive", object("absolute", height.min()),
@@ -756,7 +769,7 @@ public final class Worldgen {
                 "step", tree ? "vegetal_decoration" : "surface_structures",
                 "spawn_overrides", new JsonObject(), "max_distance_from_center", 80, "use_expansion_hack", false);
         structure.addProperty("terrain_adaptation", adaptation);
-        if (giant) {
+        if (centered) {
             structure.addProperty("start_jigsaw_name", CenteredTemplates.ANCHOR);
             // A nonzero padding enables the vanilla fit check. The invisible anchor sits below the template.
             structure.add("dimension_padding", object("bottom", 0, "top", 1));
@@ -777,7 +790,7 @@ public final class Worldgen {
             throw invalid(group, "terrain-adaptation", "elegí none para usar las opciones de colocación avanzada");
         }
         if (integer(settings, "attempts", 1, 1, 16) > 1) {
-            throw invalid(settings, "attempts", "los grupos de estructuras grandes usan 1 intento por chunk candidato");
+            throw invalid(settings, "attempts", "los grupos grandes o con reserva de espacio usan 1 intento por chunk candidato");
         }
         var result = new ArrayList<NativeHeight>();
         if (bool(settings, "surface", false)) {
@@ -846,19 +859,19 @@ public final class Worldgen {
         return preset.equals("overworld") ? preset : "the_" + preset;
     }
 
-    private static void editBlock(JsonObject target, String property, ConfigurationSection section, String key) {
+    private void editBlock(JsonObject target, String property, ConfigurationSection section, String key) {
         if (section.contains(key)) {
             target.add(property, blockState(section.getString(key, "")));
         }
     }
 
-    private static JsonObject blockState(String blockId) {
+    private JsonObject blockState(String blockId) {
         String id = blockId.startsWith("minecraft:") ? blockId.substring(10) : blockId;
-        Material material = Material.matchMaterial(id);
-        if (material == null || !material.isBlock() || material.isLegacy()) {
+        String material = registries.blockId(id);
+        if (material == null) {
             throw new IllegalArgumentException("Bloque vanilla inválido: " + blockId);
         }
-        return object("Name", material.getKey().toString());
+        return object("Name", material);
     }
 
     private static void applyOverrides(JsonObject json, ConfigurationSection section) {

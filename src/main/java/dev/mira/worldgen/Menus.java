@@ -44,6 +44,7 @@ final class Menus implements Listener {
     final Projects projects;
     final Capture capture;
     private final MDVDimensions plugin;
+    private final PackJobs packJobs;
     private final NamespacedKey wandKey;
     private final BiomeMenus biomes;
     private final CatalogMenus catalog;
@@ -51,10 +52,11 @@ final class Menus implements Listener {
     private final Map<UUID, String> recent = new HashMap<>();
     private final Map<UUID, Input> pending = new ConcurrentHashMap<>();
 
-    Menus(MDVDimensions plugin, Projects projects, Capture capture) {
+    Menus(MDVDimensions plugin, Projects projects, Capture capture, PackJobs packJobs) {
         this.plugin = plugin;
         this.projects = projects;
         this.capture = capture;
+        this.packJobs = packJobs;
         wandKey = new NamespacedKey(plugin, "selector");
         biomes = new BiomeMenus(this);
         catalog = new CatalogMenus(this);
@@ -123,19 +125,15 @@ final class Menus implements Listener {
                 "Árboles, estructuras, vegetación y otros elementos");
         view.button(22, Material.WOODEN_AXE, "Herramienta de selección", () -> selector(player),
                 "Marcá los dos extremos antes de capturar una plantilla.");
-        view.button(29, Material.SPYGLASS, "Validar", () -> {
-            projects.validate(project);
-            player.sendMessage("MDVDimensions · La configuración está lista para exportar.");
-        }, "Comprueba la configuración y las plantillas.");
-        view.button(31, Material.WRITABLE_BOOK, "Exportar ZIP", () -> {
-            var path = projects.export(project);
-            player.sendMessage("MDVDimensions · ZIP exportado a " + path + ".");
-        }, "Guardá un datapack listo para instalar.");
+        view.button(29, Material.SPYGLASS, "Validar",
+                () -> packJobs.submit(player, project, PackJobs.Operation.VALIDAR),
+                "Comprueba la configuración y las plantillas.");
+        view.button(31, Material.WRITABLE_BOOK, "Exportar ZIP",
+                () -> packJobs.submit(player, project, PackJobs.Operation.EXPORTAR),
+                "Guardá un datapack listo para instalar.");
         view.button(33, Material.ENDER_CHEST, "Instalar datapack", () -> confirm(player, "Instalar " + project,
                 () -> project(player, project), () -> {
-                    var datapacks = plugin.getServer().getWorlds().getFirst().getWorldFolder().toPath().resolve("datapacks");
-                    var path = projects.install(project, datapacks);
-                    player.sendMessage("MDVDimensions · Instalado en " + path + ". Reiniciá el servidor.");
+                    packJobs.submit(player, project, PackJobs.Operation.INSTALAR);
                     project(player, project);
                 }, "Reemplaza el ZIP de este proyecto y guarda una copia del anterior.",
                 "Dimensión: " + Projects.namespace(project) + ":world"));

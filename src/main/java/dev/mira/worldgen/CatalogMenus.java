@@ -274,6 +274,7 @@ final class CatalogMenus {
         ConfigurationSection placement = entry.getConfigurationSection("placement");
         String adaptation = entry.getString("terrain-adaptation", "none");
         boolean ignoreAir = entry.getBoolean("ignore-air", true);
+        boolean reserveFootprint = entry.getBoolean("reserve-footprint", false);
         String path = "structures." + id;
         Map<String, Integer> weights = variants(entry, id);
         List<String> targets = groupBiomes(config, project, entry);
@@ -392,14 +393,30 @@ final class CatalogMenus {
                                 checkHeight("fixed", rules.getInt("fixed-height"), -depth);
                             }
                             rules.set("surface", true);
+                            rules.set("attempts", 1);
                         }
                         group.set("height-offset", -depth);
                         group.set("terrain-adaptation", "none");
                         group.set("ignore-air", false);
+                        group.set("reserve-footprint", true);
                     });
                     reopen.run();
                 }), "Apoya el borde en la superficie y hunde la base.", "El aire guardado excava el terreno.",
-                "Protegé el exterior con bloques de vacío de estructura.");
+                "Protegé el exterior con bloques de vacío de estructura.",
+                "Reserva el área del cráter y usa un intento por zona.");
+        view.button(41, Material.SHIELD, "Reservar huella: " + (reserveFootprint ? "sí" : "no"), () -> {
+            menus.projects.editConfig(project, current -> {
+                ConfigurationSection group = requireGroup(current, id);
+                group.set("reserve-footprint", !reserveFootprint);
+                ConfigurationSection rules = group.getConfigurationSection("placement");
+                if (!reserveFootprint && rules != null) {
+                    rules.set("attempts", 1);
+                }
+            });
+            reopen.run();
+        }, "Da prioridad al grupo sobre las plantillas que crucen su área.",
+                "La huella se mide en ancho y fondo.",
+                "En modo combinado usa un intento por zona.");
         view.button(43, Material.BARRIER, "Quitar grupo", () -> menus.confirm(player, "Quitar · " + id, reopen,
                 () -> removeGroup(project, id, back), "Las plantillas se conservan en el catálogo.",
                 "Podés fijar la probabilidad en 0 para pausarlo y conservar el ID."));
@@ -449,13 +466,18 @@ final class CatalogMenus {
         view.button(30, Material.GLASS, "Permitir vacío: " + enabled(allowVoid), () ->
                 editPlacement(project, id, rules -> rules.set("allow-void", !rules.getBoolean("allow-void")), reopen),
                 "Permite colocar la base aunque no haya un bloque sólido debajo.");
-        view.button(32, Material.BONE_MEAL, "Intentos por chunk elegible: " + attempts, () ->
-                menus.input(player, "Escribí cuántas posiciones probar por chunk, de 1 a 16.", Integer.toString(attempts),
-                        reopen, value -> editPlacement(project, id,
-                                rules -> rules.set("attempts", whole(value, 1, MAX_GROUP_ATTEMPTS)), reopen)),
-                "Con un intento se usa el centro. Con varios se prueban posiciones distintas.",
-                "Las plantillas grandes admiten un intento por zona activa.",
-                "Distancia 1 y separación 0 hacen elegible cada chunk antes de aplicar la probabilidad.");
+        if (group.getBoolean("reserve-footprint", false)) {
+            view.button(32, Material.BONE_MEAL, "Intentos por zona: 1", () -> {},
+                    "La reserva de huella usa un intento por zona activa.");
+        } else {
+            view.button(32, Material.BONE_MEAL, "Intentos por chunk elegible: " + attempts, () ->
+                    menus.input(player, "Escribí cuántas posiciones probar por chunk, de 1 a 16.", Integer.toString(attempts),
+                            reopen, value -> editPlacement(project, id,
+                                    rules -> rules.set("attempts", whole(value, 1, MAX_GROUP_ATTEMPTS)), reopen)),
+                    "Con un intento se usa el centro. Con varios se prueban posiciones distintas.",
+                    "Las plantillas grandes admiten un intento por zona activa.",
+                    "Distancia 1 y separación 0 hacen elegible cada chunk antes de aplicar la probabilidad.");
+        }
         view.button(49, Material.ARROW, "Volver", back);
         view.open();
     }
@@ -975,6 +997,7 @@ final class CatalogMenus {
                 "Plantillas: " + summarize(weights.entrySet().stream().map(variant -> variant.getKey() + " ×" + variant.getValue()).toList()),
                 "Probabilidad: " + group.getDouble("frequency", 1.0), placementSummary(group),
                 attemptsSummary(group.getConfigurationSection("placement")),
+                group.getBoolean("reserve-footprint", false) ? "Reserva su huella." : "Reserva de huella desactivada.",
                 biomeSummary(groupBiomes(config, project, group)));
     }
 

@@ -10,6 +10,7 @@ import org.bukkit.entity.Player;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -17,7 +18,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -33,6 +36,8 @@ final class Projects {
     private final MDVDimensions plugin;
     private final Path data;
     private final Path projects;
+    // Commands and menus take and release these reservations on the server thread.
+    private final Set<String> packing = new HashSet<>();
 
     Projects(MDVDimensions plugin) {
         this.plugin = plugin;
@@ -133,6 +138,23 @@ final class Projects {
         return path;
     }
 
+    Path beginPackOperation(String name) {
+        Path path = editableProject(name);
+        packing.add(name);
+        return path;
+    }
+
+    void finishPackOperation(String name) {
+        packing.remove(name);
+    }
+
+    private Path editableProject(String name) {
+        if (packing.contains(name)) {
+            throw new IllegalArgumentException("El proyecto «" + name + "» tiene una operación en curso. Esperá a que termine.");
+        }
+        return project(name);
+    }
+
     private static YamlConfiguration read(Path path) throws IOException {
         var config = new YamlConfiguration();
         try {
@@ -148,7 +170,7 @@ final class Projects {
     }
 
     void editConfig(String name, Consumer<YamlConfiguration> update) throws IOException {
-        Path path = project(name);
+        Path path = editableProject(name);
         var config = read(path);
         update.accept(config);
         writeConfig(path, config);
@@ -169,7 +191,7 @@ final class Projects {
 
     void capture(Capture capture, Player player, String project, String name, String biome,
                  String kind, boolean entities) throws IOException {
-        Path path = project(project);
+        Path path = editableProject(project);
         var config = read(path);
         Path destination = register(path, config, name, biome, kind);
         capture.save(player, destination, entities);
@@ -177,7 +199,7 @@ final class Projects {
     }
 
     void recapture(Capture capture, Player player, String project, String name, boolean entities) throws IOException {
-        capture.save(player, existingTemplate(project(project), name), entities);
+        capture.save(player, existingTemplate(editableProject(project), name), entities);
     }
 
     void paste(Player player, String project, String name, StructureRotation rotation, boolean includeAir, int lowerBy)
@@ -187,7 +209,7 @@ final class Projects {
 
     void captureTemplate(Capture capture, Player player, String project, String name, String kind,
                          boolean entities) throws IOException {
-        Path path = project(project);
+        Path path = editableProject(project);
         var config = read(path);
         Path destination = registerTemplate(path, config, name, kind);
         capture.save(player, destination, entities);
@@ -196,7 +218,7 @@ final class Projects {
 
     void copyTemplate(String origin, String name, String destination) throws IOException {
         Path from = project(origin);
-        Path to = project(destination);
+        Path to = editableProject(destination);
         Path source = existingTemplate(from, name);
         var config = read(to);
         Path target = registerTemplate(to, config, name, templateKind(read(from), name));
@@ -206,7 +228,7 @@ final class Projects {
 
     void copy(String origin, String name, String destination, String biome) throws IOException {
         Path from = project(origin);
-        Path to = project(destination);
+        Path to = editableProject(destination);
         var config = read(to);
         Path source = existingTemplate(from, name);
         Path target = register(to, config, name, biome, templateKind(read(from), name));
@@ -301,28 +323,26 @@ final class Projects {
         }
     }
 
-    void validate(String project) throws IOException {
-        Path path = project(project);
+    void validate(String project, Path path, Worldgen exporter) throws IOException {
         Path staging = Files.createTempDirectory(data, ".validacion-");
         try {
-            stage(project, path, staging);
+            stage(project, path, staging, exporter);
         } finally {
             clean(staging);
         }
     }
 
-    Path export(String project) throws IOException {
-        Path path = project(project);
+    Path export(String project, Path path, Worldgen exporter) throws IOException {
         Path staging = Files.createTempDirectory(data, ".exportacion-");
         try {
-            stage(project, path, staging);
+            stage(project, path, staging, exporter);
             Path output = data.resolve("exportaciones");
             Files.createDirectories(output);
             Path destination = output.resolve(namespace(project) + ".zip");
             Path temporary = Files.createTempFile(output, ".pack-", ".tmp");
             try {
                 zip(staging, temporary);
-                replace(temporary, destination);
+                publish(temporary, destination);
                 return destination;
             } finally {
                 Files.deleteIfExists(temporary);
@@ -332,7 +352,7 @@ final class Projects {
         }
     }
 
-    private static void stage(String project, Path path, Path staging) throws IOException {
+    private static void stage(String project, Path path, Path staging, Worldgen exporter) throws IOException {
         var config = read(path);
         String namespace = namespace(project);
         Path templates = path.resolve("plantillas");
@@ -341,6 +361,7 @@ final class Projects {
             Files.createDirectories(target);
             try (var files = Files.list(templates)) {
                 for (Path source : files.filter(Files::isRegularFile).toList()) {
+                    checkInterrupted();
                     String filename = source.getFileName().toString();
                     if (filename.endsWith(".nbt") && ID.matcher(filename.substring(0, filename.length() - 4)).matches()
                             && Files.size(source) > 0) {
@@ -349,7 +370,8 @@ final class Projects {
                 }
             }
         }
-        Worldgen.write(staging, namespace, config);
+        checkInterrupted();
+        exporter.write(staging, namespace, config);
         Files.writeString(staging.resolve("pack.mcmeta"), """
                 {
                   "pack": {
@@ -361,8 +383,9 @@ final class Projects {
         Files.writeString(staging.resolve(MARKER), project, StandardCharsets.UTF_8);
     }
 
-    Path install(String project, Path datapacks) throws IOException {
-        Path source = export(project);
+    Path install(String project, Path path, Path datapacks, Worldgen exporter) throws IOException {
+        Path source = export(project, path, exporter);
+        checkInterrupted();
         Files.createDirectories(datapacks);
         Path destination = datapacks.resolve(source.getFileName());
         if (Files.exists(datapacks.resolve(namespace(project)))) {
@@ -375,15 +398,23 @@ final class Projects {
             String stamp = Instant.now().toString().replace(':', '-');
             copyReplacing(destination, backup.resolve(stamp + "-" + UUID.randomUUID() + ".zip"));
         }
-        copyReplacing(source, destination);
+        copyReplacing(source, destination, true);
         return destination;
     }
 
     private static void copyReplacing(Path source, Path destination) throws IOException {
+        copyReplacing(source, destination, false);
+    }
+
+    private static void copyReplacing(Path source, Path destination, boolean publishing) throws IOException {
         Path temporary = Files.createTempFile(destination.getParent(), ".gm-", ".tmp");
         try {
             Files.copy(source, temporary, StandardCopyOption.REPLACE_EXISTING);
-            replace(temporary, destination);
+            if (publishing) {
+                publish(temporary, destination);
+            } else {
+                replace(temporary, destination);
+            }
         } finally {
             Files.deleteIfExists(temporary);
         }
@@ -436,6 +467,7 @@ final class Projects {
     private static void zip(Path root, Path output) throws IOException {
         try (var files = Files.walk(root); var zip = new ZipOutputStream(Files.newOutputStream(output))) {
             for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
+                checkInterrupted();
                 var entry = new ZipEntry(root.relativize(file).toString().replace('\\', '/'));
                 entry.setTime(315532800000L);
                 zip.putNextEntry(entry);
@@ -450,6 +482,17 @@ final class Projects {
             Files.move(from, to, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException ex) {
             Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void publish(Path from, Path to) throws IOException {
+        checkInterrupted();
+        replace(from, to);
+    }
+
+    static void checkInterrupted() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("Se canceló la preparación del datapack.");
         }
     }
 

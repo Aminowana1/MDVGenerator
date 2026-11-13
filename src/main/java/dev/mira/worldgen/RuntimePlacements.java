@@ -58,7 +58,8 @@ final class RuntimePlacements implements Listener {
     }
 
     static void export(Path root, String namespace, ConfigurationSection config, List<String> biomeIds,
-                       Set<String> runtimeGroups, Set<String> giantStructureIds, Set<String> nativeTreeIds) throws IOException {
+                       Set<String> runtimeGroups, Set<String> giantStructureIds, Set<String> nativeTreeIds,
+                       Set<String> reservedIds, ExportRegistries registries) throws IOException {
         var entries = new ArrayList<Entry>();
         ConfigurationSection structures = config.getConfigurationSection("structures");
         if (structures != null) {
@@ -74,17 +75,18 @@ final class RuntimePlacements implements Listener {
             for (String id : vegetation.getKeys(false)) {
                 ConfigurationSection plant = Worldgen.requiredSection(vegetation, id);
                 if ("template".equals(plant.getString("mode", "block"))) {
-                    Entry entry = plant(root, config, plant, namespace, id, biomeIds);
+                    Projects.checkInterrupted();
+                    Entry entry = plant(root, config, plant, namespace, id, biomeIds, registries);
                     if (entry != null) {
                         entries.add(entry);
                     }
                 }
             }
         }
-        if (!entries.isEmpty() || (!giantStructureIds.isEmpty() && !nativeTreeIds.isEmpty())) {
+        if (!entries.isEmpty() || !reservedIds.isEmpty() || (!giantStructureIds.isEmpty() && !nativeTreeIds.isEmpty())) {
             Path file = root.resolve(MANIFEST);
             Files.createDirectories(file.getParent());
-            Files.writeString(file, JSON.toJson(new Manifest(1, namespace, entries, giantStructureIds, nativeTreeIds)),
+            Files.writeString(file, JSON.toJson(new Manifest(1, namespace, entries, giantStructureIds, nativeTreeIds, reservedIds)),
                     StandardCharsets.UTF_8);
         }
     }
@@ -118,7 +120,7 @@ final class RuntimePlacements implements Listener {
     }
 
     private static Entry plant(Path root, ConfigurationSection config, ConfigurationSection plant,
-                               String namespace, String id, List<String> biomeIds) throws IOException {
+                               String namespace, String id, List<String> biomeIds, ExportRegistries registries) throws IOException {
         if (!plant.contains("biomes") || (plant.isList("biomes") && plant.getList("biomes", List.of()).isEmpty())) {
             return null;
         }
@@ -139,7 +141,7 @@ final class RuntimePlacements implements Listener {
                 Worldgen.bool(plant, "allow-void", false));
         return new Entry(id, targets(plant, namespace, biomeIds), List.of(new Variant(template, 1)), rules, null,
                 (namespace + ":flora/" + id).hashCode(), Worldgen.integer(plant, "count", 4, 1, 128),
-                0, true, false, substrates(plant), kind.equals("tree"));
+                0, true, false, substrates(plant, registries), kind.equals("tree"));
     }
 
     private static List<String> targets(ConfigurationSection section, String namespace, List<String> biomeIds) {
@@ -150,7 +152,7 @@ final class RuntimePlacements implements Listener {
         return ids.stream().map(id -> namespace + ":" + id).toList();
     }
 
-    private static List<String> substrates(ConfigurationSection section) {
+    private static List<String> substrates(ConfigurationSection section, ExportRegistries registries) {
         Object raw = section.get("substrate");
         if (raw == null || "auto".equals(raw)) {
             return List.of();
@@ -161,11 +163,11 @@ final class RuntimePlacements implements Listener {
         List<?> entries = raw instanceof List<?> list ? list : List.of(raw);
         List<String> materials = new ArrayList<>();
         for (Object item : entries) {
-            Material block = item instanceof String name ? Material.matchMaterial(name) : null;
-            if (block == null || block.isLegacy() || !block.isBlock()) {
+            String block = item instanceof String name ? registries.blockId(name) : null;
+            if (block == null) {
                 throw Worldgen.invalid(section, "substrate", "bloque inválido: " + item);
             }
-            materials.add(block.getKey().toString());
+            materials.add(block);
         }
         return materials;
     }
@@ -201,7 +203,7 @@ final class RuntimePlacements implements Listener {
             }
         } catch (ReflectiveOperationException | RuntimeException ex) {
             if (reportedNativeError.compareAndSet(false, true)) {
-                plugin.getLogger().log(Level.SEVERE, "No se pudo proteger la huella de estructuras grandes", ex);
+                plugin.getLogger().log(Level.SEVERE, "No se pudo proteger el espacio de las estructuras", ex);
             }
         }
     }
@@ -222,18 +224,20 @@ final class RuntimePlacements implements Listener {
         if (pack == null) {
             return;
         }
-        if (!pack.giantIds().isEmpty() && !pack.nativeTreeIds().isEmpty()
-                && !nativeGuards.containsKey(world.getUID())) {
+        NativeTreeGuard guard = nativeGuards.get(world.getUID());
+        if (guard == null && (!pack.reservedIds().isEmpty()
+                || (!pack.giantIds().isEmpty() && !pack.nativeTreeIds().isEmpty()))) {
             try {
-                nativeGuards.put(world.getUID(), new NativeTreeGuard(world, pack.nativeTreeIds(), pack.giantIds()));
+                guard = new NativeTreeGuard(world, pack.nativeTreeIds(), pack.giantIds(), pack.reservedIds());
+                nativeGuards.put(world.getUID(), guard);
             } catch (ReflectiveOperationException | RuntimeException ex) {
-                plugin.getLogger().log(Level.SEVERE, "No se pudo proteger la huella de estructuras grandes en "
+                plugin.getLogger().log(Level.SEVERE, "No se pudo proteger el espacio de las estructuras en "
                         + world.getKey(), ex);
             }
         }
         if (!pack.entries().isEmpty() && world.getPopulators().stream()
                 .noneMatch(populator -> populator instanceof Populator existing && existing.isActive())) {
-            var populator = new Populator(pack, plugin.getLogger());
+            var populator = new Populator(pack, guard, plugin.getLogger());
             world.getPopulators().add(populator);
             attached.put(world.getUID(), populator);
             plugin.getLogger().info("Colocación avanzada de " + world.getKey() + ": " + pack.entries().size() + " grupo(s).");
@@ -261,7 +265,7 @@ final class RuntimePlacements implements Listener {
             try {
                 Worldgen.validateId(namespace);
                 LoadedPack loaded = loadPack(datapacks.resolve(filename), namespace);
-                if (!loaded.entries().isEmpty() || !loaded.nativeTreeIds().isEmpty()) {
+                if (!loaded.entries().isEmpty() || !loaded.nativeTreeIds().isEmpty() || !loaded.reservedIds().isEmpty()) {
                     snapshot.put(namespace, loaded);
                 }
             } catch (IOException | RuntimeException ex) {
@@ -290,7 +294,7 @@ final class RuntimePlacements implements Listener {
         Manifest manifest;
         try (InputStream input = pack.open(MANIFEST)) {
             if (input == null) {
-                return new LoadedPack(List.of(), NativeFootprints.empty(), Set.of(), Set.of());
+                return new LoadedPack(List.of(), NativeFootprints.empty(), Set.of(), Set.of(), Set.of());
             }
             manifest = JSON.fromJson(new InputStreamReader(input, StandardCharsets.UTF_8), Manifest.class);
         }
@@ -325,9 +329,10 @@ final class RuntimePlacements implements Listener {
         }
         Set<String> giantIds = manifest.giantStructureIds() == null ? Set.of() : Set.copyOf(manifest.giantStructureIds());
         Set<String> treeIds = manifest.nativeTreeIds() == null ? Set.of() : Set.copyOf(manifest.nativeTreeIds());
+        Set<String> reservedIds = manifest.reservedIds() == null ? Set.of() : Set.copyOf(manifest.reservedIds());
         NativeFootprints footprints = giantIds.isEmpty() || loaded.stream().noneMatch(entry -> entry.settings().tree())
                 ? NativeFootprints.empty() : NativeFootprints.load(giantIds);
-        return new LoadedPack(List.copyOf(loaded), footprints, giantIds, treeIds);
+        return new LoadedPack(List.copyOf(loaded), footprints, giantIds, treeIds, reservedIds);
     }
 
     private static void validateEntry(Entry entry) throws IOException {
@@ -351,7 +356,7 @@ final class RuntimePlacements implements Listener {
     }
 
     private record Manifest(int version, String namespace, List<Entry> entries, Set<String> giantStructureIds,
-                            Set<String> nativeTreeIds) {}
+                            Set<String> nativeTreeIds, Set<String> reservedIds) {}
     private record Entry(String id, List<String> biomes, List<Variant> variants, HeightRules heights, Grid grid,
                          int salt, int attempts, int offset, boolean ignoreAir, boolean entities, List<String> substrate,
                          boolean tree) {}
@@ -363,17 +368,19 @@ final class RuntimePlacements implements Listener {
     private record LoadedVariant(Structure template, int weight) {}
     private record LoadedEntry(Entry settings, List<LoadedVariant> variants, Set<String> biomes, Set<String> substrate) {}
     private record LoadedPack(List<LoadedEntry> entries, NativeFootprints footprints, Set<String> giantIds,
-                              Set<String> nativeTreeIds) {}
+                              Set<String> nativeTreeIds, Set<String> reservedIds) {}
 
     private static final class Populator extends BlockPopulator {
         private volatile List<LoadedEntry> entries;
         private final NativeFootprints footprints;
+        private final NativeTreeGuard guard;
         private final Logger log;
         private final AtomicBoolean reportedError = new AtomicBoolean();
 
-        private Populator(LoadedPack pack, Logger log) {
+        private Populator(LoadedPack pack, NativeTreeGuard guard, Logger log) {
             this.entries = pack.entries();
             this.footprints = pack.footprints();
+            this.guard = pack.reservedIds().isEmpty() ? null : guard;
             this.log = log;
         }
 
@@ -390,8 +397,8 @@ final class RuntimePlacements implements Listener {
             var footprintLookup = footprints.forRegion(region, chunkX, chunkZ);
             for (LoadedEntry entry : entries) {
                 try {
-                    populateEntry(world, chunkX, chunkZ, region, entry, footprintLookup);
-                } catch (RuntimeException ex) {
+                    populateEntry(world, chunkX, chunkZ, region, entry, footprintLookup, guard);
+                } catch (ReflectiveOperationException | RuntimeException ex) {
                     if (reportedError.compareAndSet(false, true)) {
                         log.log(Level.SEVERE, "Falló la colocación de «" + entry.settings().id() + "» en " + world.getName(), ex);
                     }
@@ -400,7 +407,8 @@ final class RuntimePlacements implements Listener {
         }
 
         private static void populateEntry(WorldInfo world, int chunkX, int chunkZ, LimitedRegion region, LoadedEntry entry,
-                                          NativeFootprints.Lookup footprints) {
+                                          NativeFootprints.Lookup footprints, NativeTreeGuard guard)
+                throws ReflectiveOperationException {
             Entry settings = entry.settings();
             Grid grid = settings.grid();
             Random random = new Random(seed(world.getSeed(), chunkX, chunkZ, settings.salt()) ^ 0x6BC3A9112D20L);
@@ -428,7 +436,7 @@ final class RuntimePlacements implements Listener {
                 }
                 var column = new Column(world, region, entry, x, z, size.getBlockY());
                 for (int y : column.heights(random)) {
-                    place(region, entry.settings(), template, x, y, z, random, footprints);
+                    place(region, entry.settings(), template, x, y, z, random, footprints, guard);
                 }
             }
         }
@@ -552,7 +560,7 @@ final class RuntimePlacements implements Listener {
     }
 
     private static void place(LimitedRegion region, Entry settings, Structure template, int x, int y, int z, Random random,
-                              NativeFootprints.Lookup footprints) {
+                              NativeFootprints.Lookup footprints, NativeTreeGuard guard) throws ReflectiveOperationException {
         BlockVector size = template.getSize();
         StructureRotation rotation = StructureRotation.values()[random.nextInt(StructureRotation.values().length)];
         int sizeX = size.getBlockX();
@@ -567,6 +575,9 @@ final class RuntimePlacements implements Listener {
             return;
         }
         if (settings.tree() && footprints.intersects(left, front, left + width - 1, front + depth - 1)) {
+            return;
+        }
+        if (guard != null && guard.intersectsReserved(left, front, left + width - 1, front + depth - 1)) {
             return;
         }
         int originX = left + (rotation == StructureRotation.CLOCKWISE_90 || rotation == StructureRotation.CLOCKWISE_180 ? width - 1 : 0);

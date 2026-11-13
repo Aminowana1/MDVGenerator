@@ -93,6 +93,7 @@ El **Catálogo** separa árboles, construcciones, vegetación y otros elementos.
 - **Distancia y probabilidad.** Distancia es el tamaño en chunks de la zona donde se busca una posición. Separación tiene que ser menor que la distancia. La probabilidad admite de 0 a 1 y filtra candidatos. Para árboles más juntos, probá una distancia baja. Para una ruina aislada, subila.
 - **Altura.** En el modo nativo podés seguir la superficie, usar el fondo oceánico o fijar una altura. El desplazamiento vertical levanta la plantilla si es positivo y la hunde si es negativo. En cavernas o Nether, la superficie puede ser el techo.
 - **Terreno y aire.** Ajustá la adaptación del terreno si querés que una construcción se integre al suelo. **Conservar el terreno en huecos** mantiene los bloques donde tu selección tenía aire. Desactivalo para despejar el interior de una estructura cuando atraviesa terreno.
+- **Reservar huella.** Activá esta opción en el grupo que deba tener prioridad, como un cráter. Las plantillas de otros grupos que crucen su área en ancho y fondo ceden el lugar. Si dos candidatos con reserva se cruzan, la semilla decide cuál tiene prioridad.
 - **Selección.** El volumen incluye ambas esquinas y admite hasta 2.000.000 de posiciones en total. Por ejemplo, una selección de 120 × 40 × 110 ocupa 528.000 posiciones. Mantené cargados todos los chunks de la selección. Su cara inferior será la base de la plantilla. Activá entidades para conservar elementos como soportes para armaduras. Los datos de los bloques capturados, como el contenido de cofres, se incluyen.
 
 Cada aparición elige uno de cuatro giros de la plantilla guardada, de 0°, 90°, 180° o 270°. Para localizar una estructura nativa usá el ID del grupo, por ejemplo `/execute in gm_arena_volcanica:world run locate structure gm_arena_volcanica:ruina_01`.
@@ -103,10 +104,10 @@ La generación automática admite hasta 257 bloques de ancho y de fondo. Para un
 
 1. Prepará la plantilla en un área de construcción. Dejá **aire** donde quieras excavar y poné **vacío de estructura** (`minecraft:structure_void`) en las celdas cuyo terreno querés conservar. El vacío de estructura se omite al capturar.
 2. Marcá el volumen completo desde el fondo hasta la parte que queda sobre el suelo. Contá cuántos bloques sube el nivel de la superficie desde la base de la selección. Por ejemplo, con base en Y 70 y referencia de superficie en Y 82, ingresá `12`.
-3. Guardá la plantilla y abrí **Catálogo → Grupos de aparición → tu grupo → Cráter o gruta**. Ingresá la profundidad medida. El botón usa la superficie como referencia, baja la base, permite que el aire excave y deja el ajuste del terreno en **Ninguno**. En un grupo combinado, también podés editar las otras alturas desde **Zonas de aparición**.
+3. Guardá la plantilla y abrí **Catálogo → Grupos de aparición → tu grupo → Cráter o gruta**. Ingresá la profundidad medida. El botón usa la superficie como referencia, baja la base, permite que el aire excave, reserva su huella y deja el ajuste del terreno en **Ninguno**. Si el grupo usa el modo combinado, aplica un intento por zona activa.
 4. Validá e instalá el datapack, reiniciá y buscá la formación en chunks nuevos.
 
-Para capturar uno de los cráteres preparados como `.schem`, cargalo con WorldEdit y usá `//paste -v -s` en un área de construcción. `-v` coloca el vacío de estructura y `-s` selecciona el volumen pegado. Consultá sus esquinas con `//size` y marcá esas mismas posiciones con `/dim pos1` y `/dim pos2`. [Comandos de WorldEdit](https://worldedit.enginehub.org/en/7.3.19/commands/#clipboard-commands)
+Si aparece un hueco cuadrado alrededor del cráter, esos lados se capturaron como aire. Corregí la plantilla con bloques de vacío de estructura en los lados y conservá el aire del pozo. Si partís de uno de los cráteres preparados como `.schem`, volvé a cargar el original con WorldEdit y usá `//paste -v -s` en un área de construcción. `-v` coloca el vacío de estructura y `-s` selecciona el volumen pegado. Consultá sus esquinas con `//size`, marcá esas mismas posiciones con `/dim pos1` y `/dim pos2` y guardá la nueva captura con `/dim actualizar <proyecto> <plantilla>`. [Comandos de WorldEdit](https://worldedit.enginehub.org/en/7.3.19/commands/#clipboard-commands)
 
 ### Pegar una plantilla en el mundo
 
@@ -122,9 +123,9 @@ El modo combinado se activa con el primer cambio en ese menú. Antes, dejá **Aj
 
 Para varios árboles por chunk, elegí **Distancia 1**, **Separación 0** y configurá **Intentos por chunk** dentro de **Zonas de aparición**. Con un intento se usa el centro. Con 2 a 16 se prueban posiciones distintas. El terreno y el espacio disponible pueden reducir el número de colocaciones.
 
-Las estructuras grandes usan un solo intento por chunk candidato para cada zona de aparición activa. Por ejemplo, un grupo grande con Superficie y Altura fija puede tener un candidato para cada una.
+Las estructuras grandes y los grupos con reserva de huella usan un solo intento por chunk candidato para cada zona de aparición activa. Por ejemplo, un grupo con Superficie y Altura fija puede tener un candidato para cada una.
 
-Dejá MDVDimensions instalado en el servidor que genera el mundo. El plugin comprueba las huellas de las estructuras grandes y coloca los grupos combinados pequeños y la vegetación de plantilla. `/locate structure` encuentra las apariciones nativas. El ZIP conserva los registros de los grupos existentes para que Minecraft siga leyendo las referencias de los chunks anteriores.
+Dejá MDVDimensions instalado en el servidor que genera el mundo. El plugin comprueba las huellas de los grupos con reserva y de las estructuras grandes, y coloca los grupos combinados pequeños y la vegetación de plantilla. `/locate structure` encuentra las apariciones nativas. El ZIP conserva los registros de los grupos existentes para que Minecraft siga leyendo las referencias de los chunks anteriores.
 
 ### Colocar plantas, bloques y plantillas
 
@@ -218,7 +219,7 @@ En este ejemplo, `flor_lunar` solo se coloca sobre tierra. Omití `substrate` pa
 | `biomes.<bioma>.mobs.<categoría>.<especie>` | `weight` de 1 a 1000 y `min`/`max` de 1 a 64. Una categoría configurada reemplaza su lista heredada. Una categoría con `{}` queda vacía. |
 | `biomes.<bioma>.data` | Campos avanzados de la definición vanilla del bioma. |
 | `catalog.<plantilla>.kind` | Tipo de plantilla guardada, `tree`, `building` u `other`. |
-| `structures.<grupo>` | `kind`, `biomes`, `templates`, `spacing`, `separation`, `frequency`, `salt`, `heightmap`, `height`, `height-offset`, `terrain-adaptation` e `ignore-air`. |
+| `structures.<grupo>` | `kind`, `biomes`, `templates`, `spacing`, `separation`, `frequency`, `salt`, `heightmap`, `height`, `height-offset`, `terrain-adaptation`, `ignore-air` y `reserve-footprint`. |
 | `structures.<grupo>.placement` | Modo combinado con `surface`, `ocean-floor`, `fixed-height`, `min-height` y `max-height`, `min-depth` y `max-depth`, y `allow-void`. |
 | `vegetation.<elemento>` | `mode` admite `block` o `template`. Ajustes comunes `count`, `heightmap`, `substrate` y `biomes`. En modo bloque, elegí `block` y `support` (`any` o `vanilla`). En modo plantilla, indicá `template` y, si lo necesitás, `allow-void`. |
 
@@ -267,3 +268,5 @@ Para habilitar superficie y altura Y −20 en ese mismo grupo, agregá este bloq
 | `/dim validar <proyecto>` | Comprueba la configuración del plugin y las referencias. Purpur revisa los datos nativos al arrancar. |
 | `/dim exportar <proyecto>` | Escribe el ZIP en `exportaciones/`. |
 | `/dim instalar <proyecto>` | Escribe o reemplaza el ZIP del proyecto en `datapacks/` del mundo principal. Reiniciá después. |
+
+Validar, exportar e instalar preparan el datapack en segundo plano, tanto desde el menú como desde la consola o el chat. Esperá el mensaje de resultado antes de editar ese proyecto en el juego, cambiar sus archivos o reiniciar. Podés seguir jugando mientras se prepara el datapack.

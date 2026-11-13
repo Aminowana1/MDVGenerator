@@ -22,6 +22,7 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
     private static final String PASTE_USAGE = "pegar <proyecto> <plantilla> [0|90|180|270|azar] [--aire] [--bajar <bloques>]";
     private final Capture capture = new Capture();
     private Projects projects;
+    private PackJobs packJobs;
     private Menus menus;
     private RuntimePlacements placements;
     private ViaEndSky viaEndSky;
@@ -50,6 +51,7 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
+        packJobs = new PackJobs(this, projects);
         placements = new RuntimePlacements(this);
         getServer().getPluginManager().registerEvents(this, this);
         getServer().getPluginManager().registerEvents(new NativeGround(), this);
@@ -68,13 +70,16 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
 
     private void initializeMenus() {
         if (menus == null) {
-            menus = new Menus(this, projects, capture);
+            menus = new Menus(this, projects, capture, packJobs);
             getServer().getPluginManager().registerEvents(menus, this);
         }
     }
 
     @Override
     public void onDisable() {
+        if (packJobs != null) {
+            packJobs.shutdown();
+        }
         if (viaEndSky != null) {
             viaEndSky.stop();
         }
@@ -179,21 +184,9 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
                     projects.paste(player(sender), args[1], args[2], options.rotation(), options.includeAir(), options.lowerBy());
                     sender.sendMessage("Plantilla «" + args[2] + "» pegada.");
                 }
-                case "validar" -> {
-                    requireArgs(args, 2, "validar <proyecto>");
-                    projects.validate(args[1]);
-                    sender.sendMessage("El proyecto está listo para exportar.");
-                }
-                case "exportar" -> {
-                    requireArgs(args, 2, "exportar <proyecto>");
-                    sender.sendMessage("Datapack exportado a " + projects.export(args[1]) + ".");
-                }
-                case "instalar" -> {
-                    requireArgs(args, 2, "instalar <proyecto>");
-                    var mainWorld = getServer().getWorlds().getFirst();
-                    var path = projects.install(args[1], mainWorld.getWorldFolder().toPath().resolve("datapacks"));
-                    sender.sendMessage("Datapack instalado en " + path + ".");
-                    sender.sendMessage("Reiniciá el servidor. La dimensión es " + Projects.namespace(args[1]) + ":world.");
+                case "validar", "exportar", "instalar" -> {
+                    requireArgs(args, 2, args[0] + " <proyecto>");
+                    packJobs.submit(sender, args[1], PackJobs.Operation.valueOf(args[0].toUpperCase(java.util.Locale.ROOT)));
                 }
                 default -> help(sender);
             }

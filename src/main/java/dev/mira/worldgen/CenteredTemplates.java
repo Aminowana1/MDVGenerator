@@ -1,6 +1,7 @@
 package dev.mira.worldgen;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -54,8 +55,11 @@ final class CenteredTemplates {
                     {pos:[%d,0,%d],state:%d,nbt:{id:"minecraft:jigsaw",name:"%s",target:"minecraft:empty",
                     pool:"minecraft:empty",final_state:"minecraft:structure_void",joint:"rollable"}}
                     """.formatted(size.width() / 2, size.depth() / 2, paletteIndex, ANCHOR)));
+            Projects.checkInterrupted();
             Files.createDirectories(target.getParent());
-            Nbt.WRITE.invoke(null, root, target);
+            try (var output = Files.newOutputStream(target)) {
+                Nbt.WRITE.invoke(null, root, output);
+            }
             return reference;
         } catch (ReflectiveOperationException ex) {
             throw ioFailure(source, ex);
@@ -121,7 +125,7 @@ final class CenteredTemplates {
         private static final Class<?> LIST = type("ListTag");
         private static final Class<?> ACCOUNT = type("NbtAccounter");
         private static final Method READ = method(type("NbtIo"), "readCompressed", Path.class, ACCOUNT);
-        private static final Method WRITE = method(type("NbtIo"), "writeCompressed", COMPOUND, Path.class);
+        private static final Method WRITE = method(type("NbtIo"), "writeCompressed", COMPOUND, OutputStream.class);
         private static final Method HEAP_LIMIT = method(ACCOUNT, "create", long.class);
         private static final Method LIST_TAG = method(COMPOUND, "getListOrEmpty", String.class);
         private static final Method LIST_INT = method(LIST, "getIntOr", int.class, int.class);
