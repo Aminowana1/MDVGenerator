@@ -93,9 +93,26 @@ El **Catálogo** separa árboles, construcciones, vegetación y otros elementos.
 - **Distancia y probabilidad.** Distancia es el tamaño en chunks de la zona donde se busca una posición. Separación tiene que ser menor que la distancia. La probabilidad admite de 0 a 1 y filtra candidatos. Para árboles más juntos, probá una distancia baja. Para una ruina aislada, subila.
 - **Altura.** En el modo nativo podés seguir la superficie, usar el fondo oceánico o fijar una altura. El desplazamiento vertical levanta la plantilla si es positivo y la hunde si es negativo. En cavernas o Nether, la superficie puede ser el techo.
 - **Terreno y aire.** Ajustá la adaptación del terreno si querés que una construcción se integre al suelo. **Conservar el terreno en huecos** mantiene los bloques donde tu selección tenía aire. Desactivalo para despejar el interior de una estructura cuando atraviesa terreno.
-- **Selección.** El volumen incluye ambas esquinas y admite hasta 48 bloques por eje. Mantené cargados todos los chunks de la selección. Su cara inferior será la base de la plantilla. Activá entidades para conservar elementos como soportes para armaduras. Los bloques y sus datos, como los datos de cofres, se guardan siempre.
+- **Selección.** El volumen incluye ambas esquinas y admite hasta 2.000.000 de posiciones en total. Por ejemplo, una selección de 120 × 40 × 110 ocupa 528.000 posiciones. Mantené cargados todos los chunks de la selección. Su cara inferior será la base de la plantilla. Activá entidades para conservar elementos como soportes para armaduras. Los datos de los bloques capturados, como el contenido de cofres, se incluyen.
 
-En 1.21.6 los grupos de árboles en modo nativo usan la colocación de estructuras. Pueden rotar y su densidad depende de las oportunidades de aparición por zona. Para localizar una estructura nativa usá el ID del grupo, por ejemplo `/execute in gm_arena_volcanica:world run locate structure gm_arena_volcanica:ruina_01`.
+Cada aparición elige uno de cuatro giros de la plantilla guardada, de 0°, 90°, 180° o 270°. Para localizar una estructura nativa usá el ID del grupo, por ejemplo `/execute in gm_arena_volcanica:world run locate structure gm_arena_volcanica:ruina_01`.
+
+La generación automática admite hasta 257 bloques de ancho y de fondo. Para una plantilla que supere esas dimensiones, podés guardarla y colocarla con `/dim pegar` dentro del límite de volumen. A partir de 49 bloques de ancho o fondo, el grupo usa colocación nativa a través de varios chunks. El plugin evita colocar árboles de los grupos de MDVDimensions en los chunks que ocupa una aparición de ese tamaño.
+
+### Grutas y cráteres
+
+1. Prepará la plantilla en un área de construcción. Dejá **aire** donde quieras excavar y poné **vacío de estructura** (`minecraft:structure_void`) en las celdas cuyo terreno querés conservar. El vacío de estructura se omite al capturar.
+2. Marcá el volumen completo desde el fondo hasta la parte que queda sobre el suelo. Contá cuántos bloques sube el nivel de la superficie desde la base de la selección. Por ejemplo, con base en Y 70 y referencia de superficie en Y 82, ingresá `12`.
+3. Guardá la plantilla y abrí **Catálogo → Grupos de aparición → tu grupo → Cráter o gruta**. Ingresá la profundidad medida. El botón usa la superficie como referencia, baja la base, permite que el aire excave y deja el ajuste del terreno en **Ninguno**. En un grupo combinado, también podés editar las otras alturas desde **Zonas de aparición**.
+4. Validá e instalá el datapack, reiniciá y buscá la formación en chunks nuevos.
+
+Para capturar uno de los cráteres preparados como `.schem`, cargalo con WorldEdit y usá `//paste -v -s` en un área de construcción. `-v` coloca el vacío de estructura y `-s` selecciona el volumen pegado. Consultá sus esquinas con `//size` y marcá esas mismas posiciones con `/dim pos1` y `/dim pos2`. [Comandos de WorldEdit](https://worldedit.enginehub.org/en/7.3.19/commands/#clipboard-commands)
+
+### Pegar una plantilla en el mundo
+
+Parate en el centro del lugar donde querés colocar la plantilla y ejecutá, por ejemplo, `/dim pegar arena_volcanica sauce_01`. La base queda a la altura de tus pies y el aire de la plantilla conserva el terreno. También podés abrir la plantilla en el catálogo y elegir **Pegar en mi posición**.
+
+Agregá `90`, `180`, `270` o `azar` para girarla. Para probar un cráter de 12 bloques de profundidad, parate sobre la superficie y usá `/dim pegar arena_volcanica crater_01 --aire --bajar 12`. `--aire` excava solo en las posiciones de aire guardadas. Mantené cargados todos los chunks del área de pegado.
 
 ### Combinar zonas de aparición
 
@@ -105,7 +122,9 @@ El modo combinado se activa con el primer cambio en ese menú. Antes, dejá **Aj
 
 Para varios árboles por chunk, elegí **Distancia 1**, **Separación 0** y configurá **Intentos por chunk** dentro de **Zonas de aparición**. Con un intento se usa el centro. Con 2 a 16 se prueban posiciones distintas. El terreno y el espacio disponible pueden reducir el número de colocaciones.
 
-Los grupos combinados y la vegetación de plantilla requieren MDVDimensions instalado en el servidor que genera el mundo. Las nuevas apariciones combinadas quedan fuera del índice de `/locate structure`. El ZIP conserva los registros nativos de los grupos existentes para que Minecraft siga leyendo las referencias de los chunks anteriores. Los grupos que siguen en modo nativo continúan generándose desde el datapack.
+Las estructuras grandes usan un solo intento por chunk candidato para cada zona de aparición activa. Por ejemplo, un grupo grande con Superficie y Altura fija puede tener un candidato para cada una.
+
+Dejá MDVDimensions instalado en el servidor que genera el mundo. El plugin comprueba las huellas de las estructuras grandes y coloca los grupos combinados pequeños y la vegetación de plantilla. `/locate structure` encuentra las apariciones nativas. El ZIP conserva los registros de los grupos existentes para que Minecraft siga leyendo las referencias de los chunks anteriores.
 
 ### Colocar plantas, bloques y plantillas
 
@@ -244,6 +263,7 @@ Para habilitar superficie y altura Y −20 en ese mismo grupo, agregá este bloq
 | `/dim guardar <proyecto> <plantilla> <bioma> <arbol\|estructura\|otro> [--entidades]` | Captura la selección y la asocia al bioma elegido. |
 | `/dim actualizar <proyecto> <plantilla> [--entidades]` | Vuelve a capturar una plantilla conservando sus grupos. |
 | `/dim copiar <origen> <plantilla> <destino> <bioma>` | Reutiliza una plantilla en otro proyecto. |
+| `/dim pegar <proyecto> <plantilla> [0\|90\|180\|270\|azar] [--aire] [--bajar <bloques>]` | Pega la plantilla centrada en tu posición. El aire excava con `--aire`. |
 | `/dim validar <proyecto>` | Comprueba la configuración del plugin y las referencias. Purpur revisa los datos nativos al arrancar. |
 | `/dim exportar <proyecto>` | Escribe el ZIP en `exportaciones/`. |
 | `/dim instalar <proyecto>` | Escribe o reemplaza el ZIP del proyecto en `datapacks/` del mundo principal. Reiniciá después. |

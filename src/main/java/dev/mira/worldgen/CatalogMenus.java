@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.bukkit.Material;
+import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -94,7 +95,7 @@ final class CatalogMenus {
                                 menus.projects.capture(menus.capture, player, project, name, biome, kind.id, entities);
                             }
                             asset(player, project, biome, name, () -> showKind(player, project, biome, kind));
-                        }), "Cada lado de la selección puede medir hasta 48 bloques.");
+                        }), "Mantené cargados todos los chunks de la selección.", "Máximo de 2.000.000 de posiciones en total.");
         view.button(49, Material.ARROW, "Volver", back);
         view.open();
     }
@@ -159,6 +160,12 @@ final class CatalogMenus {
         }
         view.button(35, Material.BONE_MEAL, "Usar como vegetación", () -> createPlant(player, project, biome, name),
                 "Crea una regla de vegetación para esta plantilla.");
+        view.button(40, Material.STRUCTURE_VOID, "Pegar en mi posición", () -> {
+            menus.projects.paste(player, project, name, StructureRotation.NONE, false, 0);
+            player.closeInventory();
+            player.sendMessage("Plantilla pegada: " + name + ".");
+        }, "Centra la plantilla a la altura de tus pies.", "Conserva el terreno en las celdas de aire.",
+                "Para girar o excavar, usá /dim pegar.");
         view.button(49, Material.ARROW, "Volver", back);
         view.open();
     }
@@ -274,7 +281,7 @@ final class CatalogMenus {
         view.button(10, kind.icon, "Variantes · " + weights.size(),
                 () -> variantList(player, project, id, reopen),
                 summarize(weights.entrySet().stream().map(weight -> weight.getKey() + " ×" + weight.getValue()).toList()),
-                "Agregá plantillas y ajustá su peso relativo.");
+                "Agregá plantillas y ajustá su peso relativo.", "Cada aparición elige uno de cuatro giros.");
         view.button(12, Material.GRASS_BLOCK, "Biomas · " + targets.size(),
                 () -> groupBiomeList(player, project, id, reopen), biomeSummary(targets), "Elegí en qué biomas aparece el grupo.");
         view.button(14, Material.MAP, "Distancia: " + spacing + " chunks", () ->
@@ -360,7 +367,8 @@ final class CatalogMenus {
                 "Modifica la forma del terreno alrededor de la construcción en modo nativo.");
         view.button(31, Material.GLASS, ignoreAir ? "Conservar el terreno en huecos: sí" : "Conservar el terreno en huecos: no",
                 () -> set(project, path + ".ignore-air", !ignoreAir, reopen),
-                "Activado, los bloques de aire guardados no borran el terreno.");
+                "Si lo desactivás, el aire guardado excava el terreno.",
+                "El vacío de estructura siempre conserva el bloque original.");
         view.button(33, Material.REDSTONE, "Semilla del patrón: " + (entry.contains("salt") ? entry.getInt("salt") : "automática"),
                 () -> menus.input(player, "Escribí un entero de 0 a 2147483647 o auto.",
                         entry.contains("salt") ? Integer.toString(entry.getInt("salt")) : "auto", reopen,
@@ -370,6 +378,28 @@ final class CatalogMenus {
         view.button(37, Material.SPYGLASS, "Zonas de aparición", () -> placement(player, project, id, reopen),
                 placementSummary(entry), attemptsSummary(placement), "Combiná superficie, fondo, altura y profundidad.",
                 "Podés usar superficie y una altura fija al mismo tiempo.");
+        view.button(39, Material.DEEPSLATE, "Cráter o gruta", () -> menus.input(player,
+                "¿Cuántos bloques hay entre la base y el nivel de la superficie en tu plantilla?",
+                Integer.toString(offset < 0 ? -offset : 8), reopen, value -> {
+                    int depth = whole(value, 1, -MIN_Y);
+                    menus.projects.editConfig(project, current -> {
+                        ConfigurationSection group = requireGroup(current, id);
+                        ConfigurationSection rules = group.getConfigurationSection("placement");
+                        if (rules == null) {
+                            group.set("heightmap", "surface");
+                        } else {
+                            if (rules.isInt("fixed-height")) {
+                                checkHeight("fixed", rules.getInt("fixed-height"), -depth);
+                            }
+                            rules.set("surface", true);
+                        }
+                        group.set("height-offset", -depth);
+                        group.set("terrain-adaptation", "none");
+                        group.set("ignore-air", false);
+                    });
+                    reopen.run();
+                }), "Apoya el borde en la superficie y hunde la base.", "El aire guardado excava el terreno.",
+                "Protegé el exterior con bloques de vacío de estructura.");
         view.button(43, Material.BARRIER, "Quitar grupo", () -> menus.confirm(player, "Quitar · " + id, reopen,
                 () -> removeGroup(project, id, back), "Las plantillas se conservan en el catálogo.",
                 "Podés fijar la probabilidad en 0 para pausarlo y conservar el ID."));
@@ -424,6 +454,7 @@ final class CatalogMenus {
                         reopen, value -> editPlacement(project, id,
                                 rules -> rules.set("attempts", whole(value, 1, MAX_GROUP_ATTEMPTS)), reopen)),
                 "Con un intento se usa el centro. Con varios se prueban posiciones distintas.",
+                "Las plantillas grandes admiten un intento por zona activa.",
                 "Distancia 1 y separación 0 hacen elegible cada chunk antes de aplicar la probabilidad.");
         view.button(49, Material.ARROW, "Volver", back);
         view.open();

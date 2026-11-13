@@ -1,5 +1,5 @@
 name: MDVDimensions
-version: '2.1.1'
+version: '2.2.0'
 main: dev.mira.worldgen.MDVDimensions
 api-version: '1.21.6'
 load: STARTUP

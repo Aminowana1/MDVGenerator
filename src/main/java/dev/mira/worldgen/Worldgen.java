@@ -144,16 +144,12 @@ public final class Worldgen {
         writeJson(data.resolve("dimension_type/environment.json"), dimensionType);
         writeJson(data.resolve("worldgen/noise_settings/terrain.json"), terrain, weightedSurface ? COMPACT_GSON : GSON);
 
-        ConfigurationSection structures = config.getConfigurationSection("structures");
-        if (structures != null && !structures.getKeys(false).isEmpty()) {
-            writeJson(data.resolve("worldgen/processor_list/ignore_air.json"), object("processors", List.of(object(
-                    "processor_type", "minecraft:block_ignore",
-                    "blocks", List.of(blockState("air"), blockState("cave_air"), blockState("void_air"))))));
-            for (String id : structures.getKeys(false)) {
-                writeStructure(data, namespace, validateId(id), requiredSection(structures, id), biomeIds);
-            }
-        }
-        RuntimePlacements.export(packRoot, namespace, config, biomeIds);
+        var runtimeGroups = new LinkedHashSet<String>();
+        var giantIds = new LinkedHashSet<String>();
+        var nativeTrees = new LinkedHashSet<String>();
+        writeStructures(data, namespace, config.getConfigurationSection("structures"), biomeIds,
+                runtimeGroups, giantIds, nativeTrees);
+        RuntimePlacements.export(packRoot, namespace, config, biomeIds, runtimeGroups, giantIds, nativeTrees);
     }
 
     private static String biomeBase(ConfigurationSection biome, String terrain) {
@@ -639,8 +635,58 @@ public final class Worldgen {
         return object("type", "minecraft:condition", "if_true", test, "then_run", rule);
     }
 
+    private static void writeStructures(Path data, String namespace, ConfigurationSection groups, List<String> biomeIds,
+                                        Set<String> runtimeGroups, Set<String> giantIds, Set<String> nativeTrees) throws IOException {
+        if (groups == null || groups.getKeys(false).isEmpty()) {
+            return;
+        }
+        Path templatesFolder = data.resolve("structure");
+        Map<String, CenteredTemplates.Size> sizes = new LinkedHashMap<>();
+        Map<String, Integer> widths = new LinkedHashMap<>();
+        for (String id : groups.getKeys(false)) {
+            ConfigurationSection group = requiredSection(groups, validateId(id));
+            int width = 0;
+            for (String template : templates(id, group).keySet()) {
+                Path file = templatesFolder.resolve(template + ".nbt");
+                if (!Files.isRegularFile(file)) {
+                    throw invalid(group, "templates", "no está guardada la plantilla " + template);
+                }
+                if (!sizes.containsKey(template)) {
+                    sizes.put(template, CenteredTemplates.size(file));
+                }
+                width = Math.max(width, sizes.get(template).horizontal());
+            }
+            widths.put(id, width);
+        }
+        var groundRequired = new LinkedHashSet<String>();
+        writeJson(data.resolve("worldgen/processor_list/ignore_air.json"), object("processors", List.of(object(
+                "processor_type", "minecraft:block_ignore",
+                "blocks", List.of(blockState("air"), blockState("cave_air"), blockState("void_air"), blockState("structure_void"))))));
+        writeJson(data.resolve("worldgen/processor_list/preserve_void.json"), object("processors", List.of(object(
+                "processor_type", "minecraft:block_ignore", "blocks", List.of(blockState("structure_void"))))));
+        for (var groupSize : widths.entrySet()) {
+            String id = groupSize.getKey();
+            ConfigurationSection group = requiredSection(groups, id);
+            boolean giant = groupSize.getValue() > NativeFootprints.LOCAL_SPAN;
+            boolean runtime = !giant && group.contains("placement");
+            if (runtime) {
+                runtimeGroups.add(id);
+            }
+            if (groupSize.getValue() > CenteredTemplates.MAX_WIDTH) {
+                throw invalid(group, "templates", "la generación automática con Minecraft admite hasta "
+                        + CenteredTemplates.MAX_WIDTH + " bloques de ancho o fondo. Podés guardar y pegar la plantilla entera con /dim pegar");
+            }
+            writeStructure(data, namespace, id, group, biomeIds, runtime, giant, giantIds, nativeTrees, groundRequired);
+        }
+        if (!groundRequired.isEmpty()) {
+            writeJson(data.resolve("tags/worldgen/structure").resolve(NativeGround.TAG + ".json"),
+                    object("values", groundRequired));
+        }
+    }
+
     private static void writeStructure(Path data, String namespace, String id, ConfigurationSection entry,
-            List<String> biomeIds) throws IOException {
+            List<String> biomeIds, boolean runtime, boolean giant, Set<String> giantIds,
+            Set<String> nativeTrees, Set<String> groundRequired) throws IOException {
         String qualified = namespace + ":" + id;
         String kind = choice(entry, "kind", "building", List.of("tree", "building", "other"));
         boolean tree = kind.equals("tree");
@@ -648,7 +694,8 @@ public final class Worldgen {
         int separation = integer(entry, "separation", tree ? 0 : Math.min(8, spacing - 1), 0, spacing - 1);
         double frequency = entry.contains("frequency")
                 ? decimal(entry.get("frequency"), entry, "frequency", 0, 1) : 1;
-        if (optionalSection(entry, "placement") != null) {
+        ConfigurationSection placement = optionalSection(entry, "placement");
+        if (runtime) {
             frequency = 0;
         }
         int salt = integer(entry, "salt", qualified.hashCode() & Integer.MAX_VALUE, 0, Integer.MAX_VALUE);
@@ -663,36 +710,114 @@ public final class Worldgen {
             throw invalid(entry, "biomes", "indicá una lista de biomas definidos en este perfil");
         }
         JsonArray elements = new JsonArray();
-        String processor = bool(entry, "ignore-air", true) ? namespace + ":ignore_air" : "minecraft:empty";
+        String processor = namespace + (bool(entry, "ignore-air", true) ? ":ignore_air" : ":preserve_void");
         for (Map.Entry<String, Integer> variant : templates(id, entry).entrySet()) {
             String template = variant.getKey();
-            if (!Files.isRegularFile(data.resolve("structure").resolve(template + ".nbt"))) {
-                throw invalid(entry, "templates", "no está guardada la plantilla " + template);
-            }
+            String reference = giant ? CenteredTemplates.write(data.resolve("structure"), template) : template;
             elements.add(object("weight", variant.getValue(), "element", object(
-                    "element_type", "minecraft:single_pool_element", "location", namespace + ":" + template,
+                    "element_type", "minecraft:single_pool_element", "location", namespace + ":" + reference,
                     "processors", processor, "projection", "rigid")));
         }
         JsonObject pool = object("fallback", "minecraft:empty", "elements", elements);
+        writeJson(data.resolve("worldgen/template_pool").resolve(id + ".json"), pool);
+        List<NativeHeight> heights = giant && placement != null ? nativeHeights(entry, placement, offset)
+                : List.of(new NativeHeight("principal", heightmap, startHeight + offset, startHeight + offset));
+        String adaptation = choice(entry, "terrain-adaptation", "none", List.of("none", "bury", "beard_thin", "beard_box"));
+        boolean requiresGround = giant && placement != null && !bool(placement, "allow-void", false);
+        for (int index = 0; index < heights.size(); index++) {
+            NativeHeight mode = heights.get(index);
+            String structureId = index == 0 ? id : "mdv_modes/" + id + "/" + mode.id();
+            String structureKey = namespace + ":" + structureId;
+            writeStructureMode(data, structureId, structureKey, qualified, targets, namespace, tree, adaptation, giant,
+                    mode, spacing, separation, frequency, salt);
+            if (giant) {
+                giantIds.add(structureKey);
+            }
+            if (tree && !runtime) {
+                nativeTrees.add(structureKey);
+            }
+            if (requiresGround) {
+                groundRequired.add(structureKey);
+            }
+        }
+    }
+
+    private static void writeStructureMode(Path data, String id, String qualified, String pool,
+                                           List<String> targets, String namespace, boolean tree, String adaptation,
+                                           boolean giant, NativeHeight height, int spacing, int separation,
+                                           double frequency, int salt) throws IOException {
+        JsonObject startHeight = height.min() == height.max() ? object("absolute", height.min())
+                : object("type", "minecraft:uniform", "min_inclusive", object("absolute", height.min()),
+                        "max_inclusive", object("absolute", height.max()));
         JsonObject structure = object("type", "minecraft:jigsaw",
                 "biomes", targets.stream().map(biome -> namespace + ":" + biome).toList(),
                 // In 1.21.6, a depth of zero also skips adding the starting piece.
-                "size", 1, "start_pool", qualified, "start_height", object("absolute", startHeight + offset),
+                "size", 1, "start_pool", pool, "start_height", startHeight,
                 "step", tree ? "vegetal_decoration" : "surface_structures",
                 "spawn_overrides", new JsonObject(), "max_distance_from_center", 80, "use_expansion_hack", false);
-        String adaptation = choice(entry, "terrain-adaptation", "none", List.of("none", "bury", "beard_thin", "beard_box"));
         structure.addProperty("terrain_adaptation", adaptation);
-        if (!heightmap.equals("fixed")) {
+        if (giant) {
+            structure.addProperty("start_jigsaw_name", CenteredTemplates.ANCHOR);
+            // A nonzero padding enables the vanilla fit check. The invisible anchor sits below the template.
+            structure.add("dimension_padding", object("bottom", 0, "top", 1));
+        }
+        if (!height.map().equals("fixed")) {
             structure.addProperty("project_start_to_heightmap",
-                    heightmap.equals("ocean_floor") ? "OCEAN_FLOOR_WG" : "WORLD_SURFACE_WG");
+                    height.map().equals("ocean_floor") ? "OCEAN_FLOOR_WG" : "WORLD_SURFACE_WG");
         }
         JsonObject structureSet = object("structures", List.of(object("structure", qualified, "weight", 1)),
                 "placement", object("type", "minecraft:random_spread", "spacing", spacing,
                         "separation", separation, "frequency", frequency, "salt", salt));
-        writeJson(data.resolve("worldgen/template_pool").resolve(id + ".json"), pool);
         writeJson(data.resolve("worldgen/structure").resolve(id + ".json"), structure);
         writeJson(data.resolve("worldgen/structure_set").resolve(id + ".json"), structureSet);
     }
+
+    private static List<NativeHeight> nativeHeights(ConfigurationSection group, ConfigurationSection settings, int offset) {
+        if (!group.getString("terrain-adaptation", "none").equals("none")) {
+            throw invalid(group, "terrain-adaptation", "elegí none para usar las opciones de colocación avanzada");
+        }
+        if (integer(settings, "attempts", 1, 1, 16) > 1) {
+            throw invalid(settings, "attempts", "los grupos de estructuras grandes usan 1 intento por chunk candidato");
+        }
+        var result = new ArrayList<NativeHeight>();
+        if (bool(settings, "surface", false)) {
+            result.add(new NativeHeight("surface", "surface", offset, offset));
+        }
+        if (bool(settings, "ocean-floor", false)) {
+            result.add(new NativeHeight("ocean_floor", "ocean_floor", offset, offset));
+        }
+        if (settings.contains("fixed-height")) {
+            int fixed = integer(settings, "fixed-height", 64, -2032, 2031) + offset;
+            result.add(new NativeHeight("fixed", "fixed", fixed, fixed));
+        }
+        if (settings.contains("min-height") || settings.contains("max-height")) {
+            int[] band = nativeBand(settings, "height", -2032, 2031);
+            result.add(new NativeHeight("height", "fixed", band[0] + offset, band[1] + offset));
+        }
+        if (settings.contains("min-depth") || settings.contains("max-depth")) {
+            int[] band = nativeBand(settings, "depth", 0, 4063);
+            result.add(new NativeHeight("depth", "surface", offset - band[1], offset - band[0]));
+        }
+        if (result.isEmpty()) {
+            throw invalid(group, "placement", "activá superficie, fondo, altura fija, rango de alturas o profundidad");
+        }
+        for (NativeHeight height : result) {
+            if (height.min() < -2032 || height.max() > 2031) {
+                throw invalid(group, "height-offset", "la altura resultante sale del rango de Minecraft");
+            }
+        }
+        return result;
+    }
+
+    private static int[] nativeBand(ConfigurationSection settings, String key, int min, int max) {
+        if (!settings.contains("min-" + key) || !settings.contains("max-" + key)) {
+            throw invalid(settings, key, "indicá los dos extremos del rango");
+        }
+        int from = integer(settings, "min-" + key, min, min, max);
+        return new int[]{from, integer(settings, "max-" + key, max, from, max)};
+    }
+
+    private record NativeHeight(String id, String map, int min, int max) {}
 
     static Map<String, Integer> templates(String id, ConfigurationSection section) {
         ConfigurationSection weighted = section.getConfigurationSection("templates");

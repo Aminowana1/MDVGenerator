@@ -8,15 +8,17 @@ import org.bukkit.World;
 import org.bukkit.block.structure.Mirror;
 import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.world.AsyncStructureSpawnEvent;
 import org.bukkit.event.world.WorldInitEvent;
 import org.bukkit.generator.BlockPopulator;
 import org.bukkit.generator.LimitedRegion;
 import org.bukkit.generator.WorldInfo;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.structure.Structure;
-import org.bukkit.util.BlockTransformer;
 import org.bukkit.util.BlockVector;
 
 import java.io.IOException;
@@ -33,6 +35,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -44,24 +47,24 @@ final class RuntimePlacements implements Listener {
     private static final int NO_SURFACE = Integer.MIN_VALUE;
     private static final int MISSING_HEIGHT = Integer.MIN_VALUE;
     private static final NamespacedKey OVERWORLD = NamespacedKey.minecraft("overworld");
-    private static final List<BlockTransformer> PRESERVE_UNDER_AIR = List.of((region, x, y, z, block, state) ->
-            block.getType().isAir() ? state.getWorld() : block);
-
     private final JavaPlugin plugin;
     private final Map<UUID, Populator> attached = new HashMap<>();
-    private Map<String, List<LoadedEntry>> activePacks;
+    private final Map<UUID, NativeTreeGuard> nativeGuards = new ConcurrentHashMap<>();
+    private final AtomicBoolean reportedNativeError = new AtomicBoolean();
+    private Map<String, LoadedPack> activePacks;
 
     RuntimePlacements(JavaPlugin plugin) {
         this.plugin = plugin;
     }
 
-    static void export(Path root, String namespace, ConfigurationSection config, List<String> biomeIds) throws IOException {
+    static void export(Path root, String namespace, ConfigurationSection config, List<String> biomeIds,
+                       Set<String> runtimeGroups, Set<String> giantStructureIds, Set<String> nativeTreeIds) throws IOException {
         var entries = new ArrayList<Entry>();
         ConfigurationSection structures = config.getConfigurationSection("structures");
         if (structures != null) {
             for (String id : structures.getKeys(false)) {
                 ConfigurationSection group = Worldgen.requiredSection(structures, id);
-                if (group.contains("placement")) {
+                if (runtimeGroups.contains(id)) {
                     entries.add(structure(group, namespace, id, biomeIds));
                 }
             }
@@ -71,17 +74,18 @@ final class RuntimePlacements implements Listener {
             for (String id : vegetation.getKeys(false)) {
                 ConfigurationSection plant = Worldgen.requiredSection(vegetation, id);
                 if ("template".equals(plant.getString("mode", "block"))) {
-                    Entry entry = plant(root, plant, namespace, id, biomeIds);
+                    Entry entry = plant(root, config, plant, namespace, id, biomeIds);
                     if (entry != null) {
                         entries.add(entry);
                     }
                 }
             }
         }
-        if (!entries.isEmpty()) {
+        if (!entries.isEmpty() || (!giantStructureIds.isEmpty() && !nativeTreeIds.isEmpty())) {
             Path file = root.resolve(MANIFEST);
             Files.createDirectories(file.getParent());
-            Files.writeString(file, JSON.toJson(new Manifest(1, namespace, entries)), StandardCharsets.UTF_8);
+            Files.writeString(file, JSON.toJson(new Manifest(1, namespace, entries, giantStructureIds, nativeTreeIds)),
+                    StandardCharsets.UTF_8);
         }
     }
 
@@ -110,25 +114,32 @@ final class RuntimePlacements implements Listener {
                 .map(entry -> new Variant(entry.getKey(), entry.getValue())).toList();
         return new Entry(id, targets(group, namespace, biomeIds), variants, rules, new Grid(spacing, separation, frequency),
                 salt, attempts, Worldgen.integer(group, "height-offset", 0, -2032, 2031),
-                Worldgen.bool(group, "ignore-air", true), true, List.of());
+                Worldgen.bool(group, "ignore-air", true), true, List.of(), tree);
     }
 
-    private static Entry plant(Path root, ConfigurationSection plant, String namespace, String id,
-                               List<String> biomeIds) {
+    private static Entry plant(Path root, ConfigurationSection config, ConfigurationSection plant,
+                               String namespace, String id, List<String> biomeIds) throws IOException {
         if (!plant.contains("biomes") || (plant.isList("biomes") && plant.getList("biomes", List.of()).isEmpty())) {
             return null;
         }
         String template = Worldgen.validateId(plant.getString("template", ""));
-        if (!Files.isRegularFile(root.resolve(templatePath(namespace, template)))) {
+        Path file = root.resolve(templatePath(namespace, template));
+        if (!Files.isRegularFile(file)) {
             throw Worldgen.invalid(plant, "template", "la plantilla «" + template + "» no está guardada");
         }
+        if (CenteredTemplates.size(file).horizontal() > NativeFootprints.LOCAL_SPAN) {
+            throw Worldgen.invalid(plant, "template", "«" + template + "» supera el ancho de la colocación de "
+                    + "vegetación. Usá un grupo de árboles y estructuras para generarla completa");
+        }
+        String kind = config instanceof YamlConfiguration yaml ? Projects.templateKind(yaml, template)
+                : config.getString("catalog." + template + ".kind", "building");
         boolean oceanFloor = Worldgen.choice(plant, "heightmap", "surface", List.of("surface", "ocean_floor"))
                 .equals("ocean_floor");
         HeightRules rules = new HeightRules(!oceanFloor, oceanFloor, MISSING_HEIGHT, null, null,
                 Worldgen.bool(plant, "allow-void", false));
         return new Entry(id, targets(plant, namespace, biomeIds), List.of(new Variant(template, 1)), rules, null,
                 (namespace + ":flora/" + id).hashCode(), Worldgen.integer(plant, "count", 4, 1, 128),
-                0, true, false, substrates(plant));
+                0, true, false, substrates(plant), kind.equals("tree"));
     }
 
     private static List<String> targets(ConfigurationSection section, String namespace, List<String> biomeIds) {
@@ -178,6 +189,23 @@ final class RuntimePlacements implements Listener {
         attach(event.getWorld());
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onStructureSpawn(AsyncStructureSpawnEvent event) {
+        NativeTreeGuard guard = nativeGuards.get(event.getWorld().getUID());
+        if (guard == null) {
+            return;
+        }
+        try {
+            if (guard.shouldCancel(event)) {
+                event.setCancelled(true);
+            }
+        } catch (ReflectiveOperationException | RuntimeException ex) {
+            if (reportedNativeError.compareAndSet(false, true)) {
+                plugin.getLogger().log(Level.SEVERE, "No se pudo proteger la huella de estructuras grandes", ex);
+            }
+        }
+    }
+
     void attach(World world) {
         if (activePacks == null) {
             World main = world.getKey().equals(OVERWORLD) ? world : plugin.getServer().getWorld(OVERWORLD);
@@ -187,16 +215,28 @@ final class RuntimePlacements implements Listener {
             activePacks = snapshot(main);
         }
         String namespace = world.getKey().getNamespace();
-        if (!world.getKey().getKey().equals("world") || world.getPopulators().stream()
-                .anyMatch(populator -> populator instanceof Populator existing && existing.isActive())) {
+        if (!world.getKey().getKey().equals("world")) {
             return;
         }
-        List<LoadedEntry> entries = activePacks.get(namespace);
-        if (entries != null) {
-            var populator = new Populator(entries, plugin.getLogger());
+        LoadedPack pack = activePacks.get(namespace);
+        if (pack == null) {
+            return;
+        }
+        if (!pack.giantIds().isEmpty() && !pack.nativeTreeIds().isEmpty()
+                && !nativeGuards.containsKey(world.getUID())) {
+            try {
+                nativeGuards.put(world.getUID(), new NativeTreeGuard(world, pack.nativeTreeIds(), pack.giantIds()));
+            } catch (ReflectiveOperationException | RuntimeException ex) {
+                plugin.getLogger().log(Level.SEVERE, "No se pudo proteger la huella de estructuras grandes en "
+                        + world.getKey(), ex);
+            }
+        }
+        if (!pack.entries().isEmpty() && world.getPopulators().stream()
+                .noneMatch(populator -> populator instanceof Populator existing && existing.isActive())) {
+            var populator = new Populator(pack, plugin.getLogger());
             world.getPopulators().add(populator);
             attached.put(world.getUID(), populator);
-            plugin.getLogger().info("Colocación avanzada de " + world.getKey() + ": " + entries.size() + " grupo(s).");
+            plugin.getLogger().info("Colocación avanzada de " + world.getKey() + ": " + pack.entries().size() + " grupo(s).");
         }
     }
 
@@ -204,12 +244,13 @@ final class RuntimePlacements implements Listener {
         // Chunk workers can still be iterating CraftWorld's populator list during plugin shutdown.
         attached.values().forEach(Populator::disable);
         attached.clear();
+        nativeGuards.clear();
         activePacks = null;
     }
 
-    private Map<String, List<LoadedEntry>> snapshot(World main) {
+    private Map<String, LoadedPack> snapshot(World main) {
         Path datapacks = main.getWorldFolder().toPath().resolve("datapacks");
-        Map<String, List<LoadedEntry>> snapshot = new HashMap<>();
+        Map<String, LoadedPack> snapshot = new HashMap<>();
         for (var pack : plugin.getServer().getDatapackManager().getEnabledPacks()) {
             String name = pack.getName();
             if (!name.startsWith("file/gm_")) {
@@ -219,9 +260,9 @@ final class RuntimePlacements implements Listener {
             String namespace = filename.endsWith(".zip") ? filename.substring(0, filename.length() - 4) : filename;
             try {
                 Worldgen.validateId(namespace);
-                List<LoadedEntry> entries = loadPack(datapacks.resolve(filename), namespace);
-                if (!entries.isEmpty()) {
-                    snapshot.put(namespace, entries);
+                LoadedPack loaded = loadPack(datapacks.resolve(filename), namespace);
+                if (!loaded.entries().isEmpty() || !loaded.nativeTreeIds().isEmpty()) {
+                    snapshot.put(namespace, loaded);
                 }
             } catch (IOException | RuntimeException ex) {
                 plugin.getLogger().log(Level.SEVERE, "No se pudo cargar la colocación avanzada de " + name, ex);
@@ -230,7 +271,7 @@ final class RuntimePlacements implements Listener {
         return Map.copyOf(snapshot);
     }
 
-    private List<LoadedEntry> loadPack(Path pack, String namespace) throws IOException {
+    private LoadedPack loadPack(Path pack, String namespace) throws IOException {
         if (Files.isDirectory(pack)) {
             return load(namespace, path -> {
                 Path file = pack.resolve(path);
@@ -245,11 +286,11 @@ final class RuntimePlacements implements Listener {
         }
     }
 
-    private List<LoadedEntry> load(String namespace, FilesInPack pack) throws IOException {
+    private LoadedPack load(String namespace, FilesInPack pack) throws IOException {
         Manifest manifest;
         try (InputStream input = pack.open(MANIFEST)) {
             if (input == null) {
-                return List.of();
+                return new LoadedPack(List.of(), NativeFootprints.empty(), Set.of(), Set.of());
             }
             manifest = JSON.fromJson(new InputStreamReader(input, StandardCharsets.UTF_8), Manifest.class);
         }
@@ -257,7 +298,7 @@ final class RuntimePlacements implements Listener {
             throw new IOException("Manifiesto de generación incompatible");
         }
         var loaded = new ArrayList<LoadedEntry>();
-        var templates = new HashMap<String, Structure>();
+        var templates = new HashMap<TemplateKey, Structure>();
         for (Entry entry : manifest.entries()) {
             validateEntry(entry);
             var variants = new ArrayList<LoadedVariant>();
@@ -266,21 +307,27 @@ final class RuntimePlacements implements Listener {
                     throw new IOException("Peso de plantilla inválido en «" + entry.id() + "»");
                 }
                 String name = Worldgen.validateId(variant.name());
-                Structure template = templates.get(name);
+                var key = new TemplateKey(name, entry.ignoreAir());
+                Structure template = templates.get(key);
                 if (template == null) {
                     try (InputStream input = pack.open(templatePath(namespace, name))) {
                         if (input == null) {
                             throw new IOException("Falta la plantilla «" + name + "»");
                         }
                         template = plugin.getServer().getStructureManager().loadStructure(input);
-                        templates.put(name, template);
+                        TemplateBlocks.filter(template, entry.ignoreAir());
+                        templates.put(key, template);
                     }
                 }
                 variants.add(new LoadedVariant(template, variant.weight()));
             }
             loaded.add(new LoadedEntry(entry, List.copyOf(variants), Set.copyOf(entry.biomes()), Set.copyOf(entry.substrate())));
         }
-        return List.copyOf(loaded);
+        Set<String> giantIds = manifest.giantStructureIds() == null ? Set.of() : Set.copyOf(manifest.giantStructureIds());
+        Set<String> treeIds = manifest.nativeTreeIds() == null ? Set.of() : Set.copyOf(manifest.nativeTreeIds());
+        NativeFootprints footprints = giantIds.isEmpty() || loaded.stream().noneMatch(entry -> entry.settings().tree())
+                ? NativeFootprints.empty() : NativeFootprints.load(giantIds);
+        return new LoadedPack(List.copyOf(loaded), footprints, giantIds, treeIds);
     }
 
     private static void validateEntry(Entry entry) throws IOException {
@@ -303,23 +350,30 @@ final class RuntimePlacements implements Listener {
         InputStream open(String path) throws IOException;
     }
 
-    private record Manifest(int version, String namespace, List<Entry> entries) {}
+    private record Manifest(int version, String namespace, List<Entry> entries, Set<String> giantStructureIds,
+                            Set<String> nativeTreeIds) {}
     private record Entry(String id, List<String> biomes, List<Variant> variants, HeightRules heights, Grid grid,
-                         int salt, int attempts, int offset, boolean ignoreAir, boolean entities, List<String> substrate) {}
+                         int salt, int attempts, int offset, boolean ignoreAir, boolean entities, List<String> substrate,
+                         boolean tree) {}
     private record Variant(String name, int weight) {}
     private record Band(int min, int max) {}
     private record HeightRules(boolean surface, boolean oceanFloor, int fixed, Band height, Band depth, boolean allowVoid) {}
     private record Grid(int spacing, int separation, double frequency) {}
+    private record TemplateKey(String name, boolean ignoreAir) {}
     private record LoadedVariant(Structure template, int weight) {}
     private record LoadedEntry(Entry settings, List<LoadedVariant> variants, Set<String> biomes, Set<String> substrate) {}
+    private record LoadedPack(List<LoadedEntry> entries, NativeFootprints footprints, Set<String> giantIds,
+                              Set<String> nativeTreeIds) {}
 
     private static final class Populator extends BlockPopulator {
         private volatile List<LoadedEntry> entries;
+        private final NativeFootprints footprints;
         private final Logger log;
         private final AtomicBoolean reportedError = new AtomicBoolean();
 
-        private Populator(List<LoadedEntry> entries, Logger log) {
-            this.entries = entries;
+        private Populator(LoadedPack pack, Logger log) {
+            this.entries = pack.entries();
+            this.footprints = pack.footprints();
             this.log = log;
         }
 
@@ -333,9 +387,10 @@ final class RuntimePlacements implements Listener {
 
         @Override
         public void populate(WorldInfo world, Random ignored, int chunkX, int chunkZ, LimitedRegion region) {
+            var footprintLookup = footprints.forRegion(region, chunkX, chunkZ);
             for (LoadedEntry entry : entries) {
                 try {
-                    populateEntry(world, chunkX, chunkZ, region, entry);
+                    populateEntry(world, chunkX, chunkZ, region, entry, footprintLookup);
                 } catch (RuntimeException ex) {
                     if (reportedError.compareAndSet(false, true)) {
                         log.log(Level.SEVERE, "Falló la colocación de «" + entry.settings().id() + "» en " + world.getName(), ex);
@@ -344,7 +399,8 @@ final class RuntimePlacements implements Listener {
             }
         }
 
-        private static void populateEntry(WorldInfo world, int chunkX, int chunkZ, LimitedRegion region, LoadedEntry entry) {
+        private static void populateEntry(WorldInfo world, int chunkX, int chunkZ, LimitedRegion region, LoadedEntry entry,
+                                          NativeFootprints.Lookup footprints) {
             Entry settings = entry.settings();
             Grid grid = settings.grid();
             Random random = new Random(seed(world.getSeed(), chunkX, chunkZ, settings.salt()) ^ 0x6BC3A9112D20L);
@@ -354,6 +410,7 @@ final class RuntimePlacements implements Listener {
             }
             boolean randomizeColumns = grid == null || settings.attempts() > 1;
             Set<Integer> usedPositions = randomizeColumns ? new LinkedHashSet<>() : Set.of();
+            Set<Integer> fittedPositions = randomizeColumns ? new LinkedHashSet<>() : Set.of();
             for (int i = 0; i < settings.attempts(); i++) {
                 int position = 8 * 16 + 8;
                 if (randomizeColumns) {
@@ -361,14 +418,29 @@ final class RuntimePlacements implements Listener {
                         position = random.nextInt(256);
                     } while (!usedPositions.add(position));
                 }
-                int x = (chunkX << 4) + (position & 15);
-                int z = (chunkZ << 4) + (position >> 4);
                 Structure template = pick(entry.variants(), random);
-                var column = new Column(world, region, entry, x, z, template.getSize().getBlockY());
+                BlockVector size = template.getSize();
+                int span = Math.max(size.getBlockX(), size.getBlockZ());
+                int x = fitColumn(chunkX, position & 15, span, region.getBuffer());
+                int z = fitColumn(chunkZ, position >> 4, span, region.getBuffer());
+                if (randomizeColumns && !fittedPositions.add((x & 15) | ((z & 15) << 4))) {
+                    continue;
+                }
+                var column = new Column(world, region, entry, x, z, size.getBlockY());
                 for (int y : column.heights(random)) {
-                    place(region, entry.settings(), template, x, y, z, random);
+                    place(region, entry.settings(), template, x, y, z, random, footprints);
                 }
             }
+        }
+
+        private static int fitColumn(int chunk, int position, int span, int buffer) {
+            int first = span / 2 - buffer;
+            int last = 15 + buffer - (span - 1 - span / 2);
+            // Export routes templates that cannot fit this region through vanilla structures.
+            if (first > last) {
+                return (chunk << 4) + position;
+            }
+            return (chunk << 4) + Math.clamp(position, first, last);
         }
 
         private static boolean candidate(long seed, int x, int z, int salt, Grid grid) {
@@ -479,7 +551,8 @@ final class RuntimePlacements implements Listener {
         }
     }
 
-    private static void place(LimitedRegion region, Entry settings, Structure template, int x, int y, int z, Random random) {
+    private static void place(LimitedRegion region, Entry settings, Structure template, int x, int y, int z, Random random,
+                              NativeFootprints.Lookup footprints) {
         BlockVector size = template.getSize();
         StructureRotation rotation = StructureRotation.values()[random.nextInt(StructureRotation.values().length)];
         int sizeX = size.getBlockX();
@@ -493,9 +566,12 @@ final class RuntimePlacements implements Listener {
         if (!region.isInRegion(left, y, front) || !region.isInRegion(left + width - 1, lastY, front + depth - 1)) {
             return;
         }
+        if (settings.tree() && footprints.intersects(left, front, left + width - 1, front + depth - 1)) {
+            return;
+        }
         int originX = left + (rotation == StructureRotation.CLOCKWISE_90 || rotation == StructureRotation.CLOCKWISE_180 ? width - 1 : 0);
         int originZ = front + (rotation == StructureRotation.COUNTERCLOCKWISE_90 || rotation == StructureRotation.CLOCKWISE_180 ? depth - 1 : 0);
         template.place(region, new BlockVector(originX, y, originZ), settings.entities(), rotation, Mirror.NONE,
-                -1, 1, random, settings.ignoreAir() ? PRESERVE_UNDER_AIR : List.of(), List.of());
+                -1, 1, random);
     }
 }

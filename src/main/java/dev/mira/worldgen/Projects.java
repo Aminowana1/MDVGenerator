@@ -2,6 +2,7 @@ package dev.mira.worldgen;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -177,6 +178,11 @@ final class Projects {
 
     void recapture(Capture capture, Player player, String project, String name, boolean entities) throws IOException {
         capture.save(player, existingTemplate(project(project), name), entities);
+    }
+
+    void paste(Player player, String project, String name, StructureRotation rotation, boolean includeAir, int lowerBy)
+            throws IOException {
+        Capture.paste(player.getLocation(), existingTemplate(project(project), name), rotation, includeAir, lowerBy);
     }
 
     void captureTemplate(Capture capture, Player player, String project, String name, String kind,

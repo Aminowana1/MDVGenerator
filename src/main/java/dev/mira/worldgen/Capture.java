@@ -7,16 +7,20 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.block.structure.Mirror;
+import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.entity.Player;
 import org.bukkit.structure.Structure;
 import org.bukkit.structure.StructureManager;
 import org.bukkit.util.BlockVector;
 
 final class Capture {
-    private static final int MAX_SIDE = 48;
+    private static final long MAX_VOLUME = 2_000_000;
     private static final int MAX_COORDINATE = 29_999_984;
 
     private final Map<UUID, Selection> selections = new HashMap<>();
@@ -71,22 +75,62 @@ final class Capture {
         int width = maxX - minX + 1;
         int height = maxY - minY + 1;
         int depth = maxZ - minZ + 1;
-        if (width > MAX_SIDE || height > MAX_SIDE || depth > MAX_SIDE) {
-            throw new IllegalArgumentException("La selección supera el máximo de 48 bloques por lado.");
-        }
-
-        for (int chunkX = minX >> 4; chunkX <= (maxX >> 4); chunkX++) {
-            for (int chunkZ = minZ >> 4; chunkZ <= (maxZ >> 4); chunkZ++) {
-                if (!world.isChunkLoaded(chunkX, chunkZ)) {
-                    throw new IllegalArgumentException("Acercate a la selección para que se carguen todos sus chunks.");
-                }
-            }
-        }
+        checkVolume(width, height, depth);
+        requireLoadedChunks(world, minX, minZ, maxX, maxZ);
 
         StructureManager manager = player.getServer().getStructureManager();
         Structure template = manager.createStructure();
         template.fill(new Location(world, minX, minY, minZ), new BlockVector(width, height, depth), includeEntities);
         writeTemplate(manager, template, destination.toAbsolutePath());
+    }
+
+    static void paste(Location center, Path source, StructureRotation rotation, boolean includeAir, int lowerBy)
+            throws IOException {
+        World world = center.getWorld();
+        Structure template = Bukkit.getStructureManager().loadStructure(source.toFile());
+        BlockVector size = template.getSize();
+        int sizeX = size.getBlockX();
+        int height = size.getBlockY();
+        int sizeZ = size.getBlockZ();
+        checkVolume(sizeX, height, sizeZ);
+
+        boolean swapAxes = rotation == StructureRotation.CLOCKWISE_90 || rotation == StructureRotation.COUNTERCLOCKWISE_90;
+        int width = swapAxes ? sizeZ : sizeX;
+        int depth = swapAxes ? sizeX : sizeZ;
+        int minX = center.getBlockX() - width / 2;
+        int minZ = center.getBlockZ() - depth / 2;
+        int maxX = minX + width - 1;
+        int maxZ = minZ + depth - 1;
+        long baseY = (long) center.getBlockY() - lowerBy;
+        if (lowerBy < 0 || baseY < world.getMinHeight() || baseY + height > world.getMaxHeight()
+                || minX < -MAX_COORDINATE || maxX > MAX_COORDINATE
+                || minZ < -MAX_COORDINATE || maxZ > MAX_COORDINATE) {
+            throw new IllegalArgumentException("El volumen de pegado sale de los límites del mundo.");
+        }
+        requireLoadedChunks(world, minX, minZ, maxX, maxZ);
+
+        int x = rotation == StructureRotation.CLOCKWISE_90 || rotation == StructureRotation.CLOCKWISE_180
+                ? maxX : minX;
+        int z = rotation == StructureRotation.COUNTERCLOCKWISE_90 || rotation == StructureRotation.CLOCKWISE_180
+                ? maxZ : minZ;
+        TemplateBlocks.filter(template, !includeAir);
+        template.place(new Location(world, x, baseY, z), true, rotation, Mirror.NONE, -1, 1, new Random());
+    }
+
+    private static void checkVolume(int width, int height, int depth) {
+        if (width < 1 || height < 1 || depth < 1 || (long) width * height > MAX_VOLUME / depth) {
+            throw new IllegalArgumentException("El volumen debe tener entre 1 y 2.000.000 de bloques.");
+        }
+    }
+
+    private static void requireLoadedChunks(World world, int minX, int minZ, int maxX, int maxZ) {
+        for (int chunkX = minX >> 4; chunkX <= (maxX >> 4); chunkX++) {
+            for (int chunkZ = minZ >> 4; chunkZ <= (maxZ >> 4); chunkZ++) {
+                if (!world.isChunkLoaded(chunkX, chunkZ)) {
+                    throw new IllegalArgumentException("Acercate al centro de la zona y esperá a que se carguen todos sus chunks.");
+                }
+            }
+        }
     }
 
     private static void writeTemplate(StructureManager manager, Structure template, Path destination) throws IOException {
