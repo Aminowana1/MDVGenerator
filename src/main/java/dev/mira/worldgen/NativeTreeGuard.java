@@ -9,11 +9,15 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Predicate;
 
 final class NativeTreeGuard {
@@ -36,8 +40,8 @@ final class NativeTreeGuard {
     private final Object templates;
     private final List<StructureCandidate> giants;
     private final List<StructureCandidate> reservations;
-    private final ConcurrentHashMap<Start, Optional<Footprint>> candidates = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Start, Boolean> acceptedReservations = new ConcurrentHashMap<>();
+    private final StartCache<Optional<Footprint>> candidates = new StartCache<>();
+    private final StartCache<Boolean> acceptedReservations = new StartCache<>();
 
     NativeTreeGuard(World world, Set<String> treeIds, Set<String> giantIds, Set<String> reservedIds)
             throws ReflectiveOperationException {
@@ -91,7 +95,9 @@ final class NativeTreeGuard {
             };
             Object placement = access.placement.invoke(access.holderValue.invoke(setHolder));
             int spacing = (int) access.spacing.invoke(placement);
-            result.add(new StructureCandidate(key, treeIds.contains(id), setKey, placement, spacing, holder, structure, biomeFilter));
+            int separation = (int) access.separation.invoke(placement);
+            result.add(new StructureCandidate(key, treeIds.contains(id), setKey, placement, spacing, separation,
+                    holder, structure, biomeFilter));
         }
         return List.copyOf(result);
     }
@@ -128,25 +134,17 @@ final class NativeTreeGuard {
     }
 
     private boolean accepted(Footprint footprint, Start start) throws ReflectiveOperationException {
-        Boolean cached = acceptedReservations.get(start);
-        if (cached != null) {
-            return cached;
-        }
-        long startPriority = priority(start);
-        // Compare only direct competitors. This fixed local rule cannot depend on generation order
-        // or recurse through a chain of adjacent starts in a dense grid.
-        boolean accepted = !matchingCandidate(footprint, reservations, (structure, otherStart) -> {
-            if (otherStart.equals(start) || !outranks(otherStart, start, startPriority)) {
-                return false;
-            }
-            Footprint other = candidate(structure, otherStart);
-            return other != null && footprint.intersects(other);
+        return acceptedReservations.get(start, () -> {
+            long startPriority = priority(start);
+            // Compare only direct competitors, without recursively evaluating their acceptance.
+            return !matchingCandidate(footprint, reservations, (structure, otherStart) -> {
+                if (otherStart.equals(start) || !outranks(otherStart, start, startPriority)) {
+                    return false;
+                }
+                Footprint other = candidate(structure, otherStart);
+                return other != null && footprint.intersects(other);
+            });
         });
-        if (acceptedReservations.size() >= CACHE_CAPACITY) {
-            acceptedReservations.clear();
-        }
-        acceptedReservations.putIfAbsent(start, accepted);
-        return accepted;
     }
 
     private boolean intersectsGiant(Footprint tree, Start treeStart) throws ReflectiveOperationException {
@@ -170,13 +168,22 @@ final class NativeTreeGuard {
         int maxZ = footprint.maxChunkZ() + START_RADIUS;
         for (StructureCandidate structure : structures) {
             int spacing = structure.spacing();
+            int separation = structure.separation();
             String id = structure.id().toString();
-            // Vanilla selects only one potential structure chunk per grid cell.
-            for (int cellX = Math.floorDiv(minX, spacing); cellX <= Math.floorDiv(maxX, spacing); cellX++) {
-                for (int cellZ = Math.floorDiv(minZ, spacing); cellZ <= Math.floorDiv(maxZ, spacing); cellZ++) {
-                    Object chunk = access.potentialChunk.invoke(structure.placement(), seed, cellX * spacing, cellZ * spacing);
-                    int x = access.chunkX.getInt(chunk);
-                    int z = access.chunkZ.getInt(chunk);
+            // Each start offset is at most spacing - separation - 1, even at negative coordinates.
+            int firstX = Math.floorDiv(minX + separation, spacing);
+            int lastX = Math.floorDiv(maxX, spacing);
+            int firstZ = Math.floorDiv(minZ + separation, spacing);
+            int lastZ = Math.floorDiv(maxZ, spacing);
+            for (int cellX = firstX; cellX <= lastX; cellX++) {
+                for (int cellZ = firstZ; cellZ <= lastZ; cellZ++) {
+                    int x = cellX * spacing;
+                    int z = cellZ * spacing;
+                    if (spacing - separation > 1) {
+                        Object chunk = access.potentialChunk.invoke(structure.placement(), seed, x, z);
+                        x = access.chunkX.getInt(chunk);
+                        z = access.chunkZ.getInt(chunk);
+                    }
                     if (x >= minX && x <= maxX && z >= minZ && z <= maxZ && check.test(structure, new Start(id, x, z))) {
                         return true;
                     }
@@ -187,15 +194,11 @@ final class NativeTreeGuard {
     }
 
     private Footprint candidate(StructureCandidate structure, Start start) throws ReflectiveOperationException {
-        Optional<Footprint> cached = candidates.get(start);
-        if (cached != null) {
-            return cached.orElse(null);
-        }
-        if (candidates.size() >= CACHE_CAPACITY) {
-            candidates.clear();
-        }
+        return candidates.get(start, () -> Optional.ofNullable(generateCandidate(structure, start))).orElse(null);
+    }
+
+    private Footprint generateCandidate(StructureCandidate structure, Start start) throws ReflectiveOperationException {
         if (!(boolean) access.isStructureChunk.invoke(structure.placement(), generatorState, start.x(), start.z(), structure.setKey())) {
-            candidates.putIfAbsent(start, Optional.empty());
             return null;
         }
         // Evaluate the same vanilla start without loading a chunk or publishing a second Bukkit event.
@@ -211,7 +214,6 @@ final class NativeTreeGuard {
                 footprint = actual;
             }
         }
-        candidates.putIfAbsent(start, Optional.ofNullable(footprint));
         return footprint;
     }
 
@@ -236,8 +238,77 @@ final class NativeTreeGuard {
         boolean test(StructureCandidate structure, Start start) throws ReflectiveOperationException;
     }
 
+    @FunctionalInterface
+    private interface StartLookup<T> {
+        T load() throws ReflectiveOperationException;
+    }
+
+    private static final class StartCache<T> {
+        private final LinkedHashMap<Start, T> completed = new LinkedHashMap<>(16, 0.75f, true);
+        private final Map<Start, CompletableFuture<T>> inProgress = new HashMap<>();
+
+        T get(Start start, StartLookup<T> lookup) throws ReflectiveOperationException {
+            CompletableFuture<T> result;
+            boolean owner;
+            synchronized (this) {
+                T cached = completed.get(start);
+                if (cached != null) {
+                    return cached;
+                }
+                result = inProgress.get(start);
+                owner = result == null;
+                if (owner) {
+                    result = new CompletableFuture<>();
+                    inProgress.put(start, result);
+                }
+            }
+            if (!owner) {
+                return await(result);
+            }
+
+            // Raw candidate generation never calls the guard. Reservation checks only wait on those
+            // raw candidates, so lookups cannot wait on each other in a cycle.
+            try {
+                T value = lookup.load();
+                synchronized (this) {
+                    completed.put(start, value);
+                    if (completed.size() > CACHE_CAPACITY) {
+                        completed.pollFirstEntry();
+                    }
+                }
+                result.complete(value);
+                return value;
+            } catch (ReflectiveOperationException | RuntimeException | Error ex) {
+                result.completeExceptionally(ex);
+                throw ex;
+            } finally {
+                synchronized (this) {
+                    inProgress.remove(start);
+                }
+            }
+        }
+
+        private T await(CompletableFuture<T> result) throws ReflectiveOperationException {
+            try {
+                return result.get();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new ReflectiveOperationException(ex);
+            } catch (ExecutionException ex) {
+                Throwable cause = ex.getCause();
+                if (cause instanceof RuntimeException runtime) {
+                    throw runtime;
+                }
+                if (cause instanceof Error error) {
+                    throw error;
+                }
+                throw (ReflectiveOperationException) cause;
+            }
+        }
+    }
+
     private record StructureCandidate(NamespacedKey id, boolean tree, Object setKey, Object placement, int spacing,
-                                      Object holder, Object structure, Predicate<Object> biomes) {}
+                                      int separation, Object holder, Object structure, Predicate<Object> biomes) {}
 
     private record Start(String id, int x, int z) {}
 
@@ -264,7 +335,8 @@ final class NativeTreeGuard {
     private static final class Access {
         final Method worldHandle, chunkSource, dimension, registries, generator, biomeSource, generatorState,
                 randomState, templates, structureSets, holderKey, keyLocation, structureHolder, holderValue,
-                structureBiomes, biomeContains, placement, spacing, potentialChunk, isStructureChunk, generate, validStart, startBounds,
+                structureBiomes, biomeContains, placement, spacing, separation, potentialChunk, isStructureChunk,
+                generate, validStart, startBounds,
                 minX, minZ, maxX, maxZ, minY;
         final Constructor<?> chunkPos;
         final Field chunkX, chunkZ;
@@ -309,6 +381,7 @@ final class NativeTreeGuard {
             biomeContains = holderSet.getMethod("contains", holder);
             placement = structureSet.getMethod("placement");
             spacing = randomSpread.getMethod("spacing");
+            separation = randomSpread.getMethod("separation");
             potentialChunk = randomSpread.getMethod("getPotentialStructureChunk", long.class, int.class, int.class);
             isStructureChunk = placementClass.getMethod("isStructureChunk", generatorStateClass, int.class,
                     int.class, resourceKey);

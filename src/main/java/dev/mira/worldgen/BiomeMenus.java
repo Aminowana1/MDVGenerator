@@ -323,6 +323,17 @@ final class BiomeMenus {
         var view = menus.menu(player, "Capas del terreno");
         layerButton(view, 11, player, project, config, path, "surface", "Superficie", Material.GRASS_BLOCK, back);
         layerButton(view, 15, player, project, config, path, "subsurface", "Subsuelo", Material.DIRT, back);
+        if (path.startsWith("biomes.")) {
+            String key = path + ".default-block";
+            String current = config.getString(key);
+            Material icon = current == null ? Material.STONE : Material.matchMaterial(current);
+            view.button(13, blockIcon(icon), "Bloque base del bioma",
+                    () -> chooseBlock(player, "Bloque base del bioma", BLOCKS, back,
+                            material -> set(project, key, material.getKey().toString(), back),
+                            () -> set(project, key, null, back)),
+                    current == null ? "Heredado del mundo" : "Actual · " + current,
+                    "Se aplica debajo de las paletas");
+        }
         view.button(29, Material.SNOW, "Grosor de la superficie", () -> editInput(player, project, config, path + ".surface-depth",
                 "Capas de superficie entre 1 y 16, o heredar.", back, integer(1, 16)),
                 "Actual · " + layerDepth(config, path, "surface", 1) + " bloque(s)");

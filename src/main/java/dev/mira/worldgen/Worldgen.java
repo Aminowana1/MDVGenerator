@@ -40,6 +40,8 @@ public final class Worldgen {
     private static final List<String> MOB_CATEGORIES = List.of("monster", "creature", "ambient", "axolotls",
             "underground_water_creature", "water_creature", "water_ambient", "misc");
     private static final int VEGETATION_STEP = 9;
+    private static final int PALETTE_BAND_HEIGHT = 16;
+    private static final int PALETTE_GRADIENT_RANGE = 2000;
     private static final Set<String> DOUBLE_PLANTS = Set.of("minecraft:sunflower", "minecraft:lilac",
             "minecraft:rose_bush", "minecraft:peony", "minecraft:tall_grass", "minecraft:large_fern",
             "minecraft:tall_seagrass", "minecraft:small_dripleaf", "minecraft:pitcher_plant");
@@ -129,14 +131,17 @@ public final class Worldgen {
             }
             Layers biomeLayers = layers(biome, worldLayers);
             weightedSurface |= biomeLayers.weighted();
-            addSurfaceRules(surfaceRules, namespace, id, biomeLayers, minY, maxNoiseY);
+            addSurfaceRules(surfaceRules, namespace, id, biomeLayers, biomeDefaultBlock(biome), minY, maxNoiseY);
             writeJson(data.resolve("worldgen/biome").resolve(id + ".json"), definition);
         }
-        if (advancedNoise == null || !advancedNoise.contains("surface_rule")) {
+        boolean advancedSurface = advancedNoise != null && advancedNoise.contains("surface_rule");
+        if (!advancedSurface) {
             includeBiomeAliases(terrain.get("surface_rule"), biomeAliases);
         }
+        JsonObject originalSurface = terrain.getAsJsonObject("surface_rule");
+        int prefixRules = surfacePrefix(world, originalSurface, advancedSurface);
         if (!surfaceRules.isEmpty()) {
-            terrain.add("surface_rule", withSurfaceRules(terrain.getAsJsonObject("surface_rule"), surfaceRules));
+            terrain.add("surface_rule", withSurfaceRules(originalSurface, surfaceRules, prefixRules));
         }
         JsonObject generator = object(
                 "type", "minecraft:noise",
@@ -523,8 +528,20 @@ public final class Worldgen {
         return object("type", "minecraft:block", "result_state", block);
     }
 
+    private JsonObject biomeDefaultBlock(ConfigurationSection biome) {
+        String key = "default-block";
+        if (!biome.contains(key)) {
+            return null;
+        }
+        Object value = biome.get(key);
+        if (!(value instanceof String block) || block.isBlank()) {
+            throw invalid(biome, key, "indicá el ID de un bloque");
+        }
+        return materialRule(blockState(block));
+    }
+
     private static void addSurfaceRules(JsonArray allRules, String namespace, String id, Layers layers,
-            int minY, int maxY) {
+            JsonObject defaultBlock, int minY, int maxY) {
         JsonArray rules = new JsonArray();
         String randomBase = namespace + ":layers/" + id + "/";
         int top = layers.surfaceDepth() - 1;
@@ -536,18 +553,34 @@ public final class Worldgen {
             rules.add(condition(object("type", "minecraft:not", "invert", stoneDepth(top)),
                     condition(stoneDepth(top + layers.subsurfaceDepth()), subsurface)));
         }
+        if (defaultBlock != null) {
+            rules.add(defaultBlock);
+        }
         if (!rules.isEmpty()) {
             allRules.add(condition(object("type", "minecraft:biome", "biome_is", List.of(namespace + ":" + id)),
                     object("type", "minecraft:sequence", "sequence", rules)));
         }
     }
 
-    private static JsonObject withSurfaceRules(JsonObject original, JsonArray custom) {
+    private static int surfacePrefix(ConfigurationSection world, JsonObject surface, boolean advancedSurface) {
+        String key = "surface-rules-before-palettes";
+        if (!world.contains(key)) {
+            return 0;
+        }
+        if (!advancedSurface || surface == null || !surface.has("type")
+                || !"minecraft:sequence".equals(surface.get("type").getAsString())
+                || !(surface.get("sequence") instanceof JsonArray sequence)) {
+            throw invalid(world, key, "requiere una secuencia en noise-settings.surface_rule");
+        }
+        return integer(world, key, 0, 0, sequence.size());
+    }
+
+    private static JsonObject withSurfaceRules(JsonObject original, JsonArray custom, int prefixRules) {
         JsonArray result = new JsonArray();
         if (original.get("type").getAsString().equals("minecraft:sequence")) {
             JsonArray old = original.getAsJsonArray("sequence");
             int index = 0;
-            while (index < old.size() && isBedrockRule(old.get(index).getAsJsonObject())) {
+            while (index < old.size() && (index < prefixRules || isBedrockRule(old.get(index).getAsJsonObject()))) {
                 result.add(old.get(index++));
             }
             result.addAll(custom);
@@ -589,30 +622,33 @@ public final class Worldgen {
         if (shares.size() == 1) {
             return shares.getFirst().rule();
         }
-        return chooseAtHeight(shares, randomName, minY, maxY, minY, maxY);
+        return chooseInHeightBands(shares, randomName, minY, maxY, minY, maxY);
     }
 
-    private static JsonObject chooseAtHeight(List<MaterialShare> shares, String randomName, int bottom, int top,
+    private static JsonObject chooseInHeightBands(List<MaterialShare> shares, String randomName, int bottom, int top,
             int low, int high) {
-        if (low == high) {
+        int bandCount = (high - low + 1) / PALETTE_BAND_HEIGHT;
+        if (bandCount == 1) {
             JsonArray choices = new JsonArray();
+            int midpoint = low + (high - low) / 2;
             int cumulative = 0;
             for (int index = 0; index < shares.size() - 1; index++) {
                 MaterialShare share = shares.get(index);
                 cumulative += share.percent();
-                // A vertical gradient samples the same random value at (x,y,z) for the same random_name.
-                // At y, [y-(100-p), y+p] makes its threshold p/100 at every height.
+                // These gradients share a random sample at each block. Moving away from the midpoint
+                // shifts all thresholds by the same amount, at most 0.4 percentage points.
+                int threshold = PALETTE_GRADIENT_RANGE * cumulative / 100;
                 JsonObject test = object("type", "minecraft:vertical_gradient", "random_name", randomName,
-                        "true_at_and_below", anchor(low - (100 - cumulative), bottom, top),
-                        "false_at_and_above", anchor(low + cumulative, bottom, top));
+                        "true_at_and_below", anchor(midpoint + threshold - PALETTE_GRADIENT_RANGE, bottom, top),
+                        "false_at_and_above", anchor(midpoint + threshold, bottom, top));
                 choices.add(condition(test, share.rule()));
             }
             choices.add(shares.getLast().rule());
             return object("type", "minecraft:sequence", "sequence", choices);
         }
-        int middle = low + (high - low + 1) / 2;
-        JsonObject lower = chooseAtHeight(shares, randomName, bottom, top, low, middle - 1);
-        JsonObject higher = chooseAtHeight(shares, randomName, bottom, top, middle, high);
+        int middle = low + bandCount / 2 * PALETTE_BAND_HEIGHT;
+        JsonObject lower = chooseInHeightBands(shares, randomName, bottom, top, low, middle - 1);
+        JsonObject higher = chooseInHeightBands(shares, randomName, bottom, top, middle, high);
         JsonObject test = object("type", "minecraft:y_above", "anchor", anchor(middle, bottom, top),
                 "surface_depth_multiplier", 0, "add_stone_depth", false);
         return object("type", "minecraft:sequence", "sequence", List.of(condition(test, higher), lower));

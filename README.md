@@ -4,7 +4,7 @@ Plugin para **Purpur 1.21.6** que te deja diseñar biomas, guardar construccione
 
 ## Compilar e instalar
 
-**En GitHub.** Subí al repositorio el contenido de la carpeta del proyecto, incluida `.github`. En **Actions → Compilar plugin**, elegí **Run workflow**. Cuando termine, descargá el artefacto **MDVDimensions** y extraé `MDVDimensions-2.1.1.jar`.
+**En GitHub.** Subí al repositorio el contenido de la carpeta del proyecto, incluida `.github`. En **Actions → Compilar plugin**, elegí **Run workflow**. Cuando termine, descargá el artefacto **MDVDimensions** y extraé `MDVDimensions-2.2.2-necrosfera.1.jar`.
 
 **En tu computadora.** Con JDK 21 y Maven, ejecutá este comando desde la carpeta que contiene `pom.xml`.
 
@@ -12,12 +12,12 @@ Plugin para **Purpur 1.21.6** que te deja diseñar biomas, guardar construccione
 mvn -B clean verify
 ~~~
 
-El JAR queda en `target/MDVDimensions-2.1.1.jar`. Copialo a `plugins/` y reiniciá el servidor. Los operadores tienen acceso por defecto. Para habilitar el editor a otro administrador, asignale `mdvdimensions.admin`. También se aceptan los permisos anteriores `mdvgenerator.admin` y `generamundos.admin`.
+El JAR queda en `target/MDVDimensions-2.2.2-necrosfera.1.jar`. Copialo a `plugins/` y reiniciá el servidor. Los operadores tienen acceso por defecto. Para habilitar el editor a otro administrador, asignale `mdvdimensions.admin`. También se aceptan los permisos anteriores `mdvgenerator.admin` y `generamundos.admin`.
 
 ### Si ya usabas MDVGenerator o GeneraMundos
 
 1. Apagá el servidor y hacé una copia de seguridad.
-2. Retirá los JAR de las versiones anteriores de `plugins/` y poné `MDVDimensions-2.1.1.jar`. Conservá las carpetas `plugins/MDVGenerator/` y `plugins/GeneraMundos/` que existan.
+2. Retirá los JAR de las versiones anteriores de `plugins/` y poné `MDVDimensions-2.2.2-necrosfera.1.jar`. Conservá las carpetas `plugins/MDVGenerator/` y `plugins/GeneraMundos/` que existan.
 3. Arrancá el servidor. El plugin copia los proyectos con su `generacion.yml` y sus plantillas NBT a `plugins/MDVDimensions/proyectos/`. Busca primero en MDVGenerator y después en GeneraMundos. Si un proyecto ya existe en la carpeta nueva, conserva esa copia. Las exportaciones y copias de seguridad anteriores quedan en sus carpetas originales.
 4. Abrí `/dim` y elegí el proyecto importado. Su dimensión sigue siendo `gm_<proyecto>:world` y el ZIP conserva el nombre `gm_<proyecto>.zip`. Los datapacks instalados siguen activos. Si migrás desde GeneraMundos y querés que una nueva exportación conserve los mobs que heredabas del bioma vanilla, habilitá **Mobs heredados** en ese bioma.
 
@@ -61,7 +61,7 @@ En **Capas del terreno → Superficie**, abrí la paleta. Si trae un bloque al 1
 | `coal_block` | 40% |
 | `obsidian` | 10% |
 
-En **Grosor de la superficie**, ingresá `5`. Si querés una capa distinta debajo de esas cinco capas, configurá **Subsuelo** y **Grosor del subsuelo**. Los porcentajes son probabilidades de elección al generar el terreno. En una zona pequeña, la proporción observada puede diferir. Usá el bloque base para modificar la masa del terreno por debajo de estas capas.
+En **Grosor de la superficie**, ingresá `5`. Si querés una capa distinta debajo de esas cinco capas, configurá **Subsuelo** y **Grosor del subsuelo**. Los porcentajes son probabilidades de elección al generar el terreno. En una zona pequeña, la proporción observada puede diferir. Para reducir el tamaño de las reglas, la probabilidad de cada bloque puede variar hasta 0,4 puntos porcentuales según la altura. En el mismo menú del bioma, usá **Bloque base del bioma** para elegir el material por debajo de sus capas. **Heredar** vuelve a usar las reglas y el bloque base del mundo.
 
 Si querés más control sobre la forma, usá **Mundo → Generador avanzado**. En el ZIP exportado, `data/gm_<proyecto>/worldgen/noise_settings/terrain.json` muestra un punto de partida. En `world.noise-settings`, `noise_router` controla la distribución tridimensional del terreno, `noise` define el volumen de generación y `surface_rule` define reglas de materiales. Cada clave de primer nivel reemplaza la sección completa del perfil. Si editás un objeto como `noise_router`, incluí todos sus campos obligatorios. [Formato de datos de Java 1.21.6](https://www.minecraft.net/en-us/article/minecraft-java-edition-1-21-6)
 
@@ -212,7 +212,9 @@ En este ejemplo, `flor_lunar` solo se coloca sobre tierra. Omití `substrate` pa
 | --- | --- |
 | `world` | `terrain`, `environment`, `rules`, `default-block`, `default-fluid`, `sea-level`. |
 | `world` y `biomes.<bioma>` | `surface` y `subsurface` admiten un bloque o un mapa de porcentajes enteros que sumen 100. `surface-depth` de 1 a 16 y `subsurface-depth` de 0 a 64. |
+| `biomes.<bioma>.default-block` | Bloque base del bioma bajo sus capas, editable desde **Capas del terreno → Bloque base del bioma**. |
 | `world.noise-settings`, `world.dimension-type` | Campos nativos de Minecraft. Los menús avanzados también permiten editarlos en JSON. |
+| `world.surface-rules-before-palettes` | Si `world.noise-settings.surface_rule` es una secuencia, indica cuántas reglas iniciales tienen prioridad sobre las paletas. Por ejemplo, `1` permite aplicar primero una regla de agua. |
 | `biomes.<bioma>` | `name`, `base`, `relief`, `temperature`, `downfall`, `precipitation`, `vanilla-vegetation`, `vanilla-mobs`. |
 | `biomes.<bioma>.colors` | `sky`, `fog`, `water`, `water-fog`, `grass`, `foliage`. |
 | `biomes.<bioma>.climate` | `temperature`, `humidity`, `continentalness`, `erosion`, `depth`, `weirdness` y `offset`. Los valores indicados reemplazan los parámetros del relieve para esas señales. |
