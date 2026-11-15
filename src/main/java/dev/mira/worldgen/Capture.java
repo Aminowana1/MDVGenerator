@@ -84,7 +84,8 @@ final class Capture {
         writeTemplate(manager, template, destination.toAbsolutePath());
     }
 
-    static void paste(Location center, Path source, StructureRotation rotation, boolean includeAir, int lowerBy)
+    static void paste(Location center, Path source, StructureRotation rotation, boolean includeAir, int lowerBy,
+                      int buildMaxY)
             throws IOException {
         World world = center.getWorld();
         Structure template = Bukkit.getStructureManager().loadStructure(source.toFile());
@@ -106,6 +107,9 @@ final class Capture {
                 || minX < -MAX_COORDINATE || maxX > MAX_COORDINATE
                 || minZ < -MAX_COORDINATE || maxZ > MAX_COORDINATE) {
             throw new IllegalArgumentException("El volumen de pegado sale de los límites del mundo.");
+        }
+        if (baseY + height - 1 > buildMaxY) {
+            throw new IllegalArgumentException("La plantilla supera la altura máxima de construcción, Y" + buildMaxY + ".");
         }
         requireLoadedChunks(world, minX, minZ, maxX, maxZ);
 

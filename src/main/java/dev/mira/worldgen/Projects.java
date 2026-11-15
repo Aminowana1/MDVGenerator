@@ -2,6 +2,7 @@ package dev.mira.worldgen;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.bukkit.Location;
 import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
@@ -204,7 +205,9 @@ final class Projects {
 
     void paste(Player player, String project, String name, StructureRotation rotation, boolean includeAir, int lowerBy)
             throws IOException {
-        Capture.paste(player.getLocation(), existingTemplate(project(project), name), rotation, includeAir, lowerBy);
+        Location center = player.getLocation();
+        Capture.paste(center, existingTemplate(project(project), name), rotation, includeAir, lowerBy,
+                plugin.buildHeight(center.getWorld()));
     }
 
     void captureTemplate(Capture capture, Player player, String project, String name, String kind,
@@ -332,10 +335,13 @@ final class Projects {
         }
     }
 
-    Path export(String project, Path path, Worldgen exporter) throws IOException {
+    Path export(String project, Path path, Path datapacks, Worldgen exporter) throws IOException {
         Path staging = Files.createTempDirectory(data, ".exportacion-");
         try {
             stage(project, path, staging, exporter);
+            if (datapacks != null) {
+                retainInstalledHeight(staging, datapacks, project);
+            }
             Path output = data.resolve("exportaciones");
             Files.createDirectories(output);
             Path destination = output.resolve(namespace(project) + ".zip");
@@ -384,7 +390,7 @@ final class Projects {
     }
 
     Path install(String project, Path path, Path datapacks, Worldgen exporter) throws IOException {
-        Path source = export(project, path, exporter);
+        Path source = export(project, path, datapacks, exporter);
         checkInterrupted();
         Files.createDirectories(datapacks);
         Path destination = datapacks.resolve(source.getFileName());
@@ -437,9 +443,38 @@ final class Projects {
             }
             JsonObject oldBounds = json(before, dimension);
             JsonObject newBounds = json(after, dimension);
-            if (!oldBounds.get("min_y").equals(newBounds.get("min_y"))
-                    || !oldBounds.get("height").equals(newBounds.get("height"))) {
-                throw new IllegalArgumentException("Los límites verticales cambiaron. Usá un proyecto nuevo para cambiar min_y o height.");
+            if (!oldBounds.get("min_y").equals(newBounds.get("min_y"))) {
+                throw new IllegalArgumentException("El mínimo vertical cambió. Usá un proyecto nuevo para cambiar min_y.");
+            }
+            if (newBounds.get("height").getAsInt() < oldBounds.get("height").getAsInt()) {
+                throw new IllegalArgumentException("La altura física se redujo. Volvé a exportar con el datapack instalado.");
+            }
+        }
+    }
+
+    private static void retainInstalledHeight(Path staging, Path datapacks, String project) throws IOException {
+        String namespace = namespace(project);
+        Path installed = datapacks.resolve(namespace + ".zip");
+        if (!Files.isRegularFile(installed)) {
+            return;
+        }
+
+        String dimension = "data/" + namespace + "/dimension_type/environment.json";
+        try (var archive = new ZipFile(installed.toFile())) {
+            if (!managed(archive, project)) {
+                return;
+            }
+            Path file = staging.resolve(dimension);
+            JsonObject next;
+            try (var reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                next = JsonParser.parseReader(reader).getAsJsonObject();
+            }
+            JsonObject previous = json(archive, dimension);
+            int previousHeight = previous.get("height").getAsInt();
+            if (previous.get("min_y").equals(next.get("min_y"))
+                    && previousHeight > next.get("height").getAsInt()) {
+                next.addProperty("height", previousHeight);
+                Files.writeString(file, next.toString(), StandardCharsets.UTF_8);
             }
         }
     }

@@ -208,6 +208,14 @@ final class BiomeMenus {
         view.button(16, Material.WATER_BUCKET, "Nivel del mar", () -> editInput(player, project, config, "world.sea-level",
                 "Altura del mar. Escribí un entero entre -2032 y 2031, o heredar.", back, integer(-2032, 2031)),
                 terrainValue(config, terrain, "sea-level", "sea_level", null));
+        String buildHeight = "world." + Worldgen.BUILD_MAX_Y;
+        view.button(22, Material.SCAFFOLDING, "Altura máxima de construcción",
+                () -> editInput(player, project, config, buildHeight,
+                        "Escribí la última Y construible entre -2032 y 2031, o desactivar para usar el límite del mundo.", back,
+                        answer -> answer.equalsIgnoreCase("desactivar") || answer.equalsIgnoreCase("auto")
+                                ? null : integer(-2032, 2031).apply(answer)),
+                config.contains(buildHeight) ? "Último bloque construible en Y " + config.get(buildHeight) : "Límite del mundo",
+                "Instalá el datapack y reiniciá para aplicar el cambio");
         view.button(28, Material.STONE, "Bloque base", () -> chooseBlock(player, "Bloque base", BLOCKS, back,
                 material -> set(project, "world.default-block", material.getKey().toString(), back),
                 () -> set(project, "world.default-block", null, back)), terrainValue(config, terrain, "default-block", "default_block", "Name"));

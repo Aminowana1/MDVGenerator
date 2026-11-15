@@ -24,6 +24,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
 
 public final class Worldgen {
+    static final String BUILD_MAX_Y = "build-max-y";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Gson COMPACT_GSON = new Gson();
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9_-]*");
@@ -91,13 +92,22 @@ public final class Worldgen {
                 || (long) minY + noiseHeight > 2032) {
             throw invalid(world, "noise-settings.noise", "revisá min_y y height, deben respetar los límites de Minecraft y ser múltiplos de 16");
         }
-        int height = terrainName.equals("nether") || terrainName.equals("end")
+        int terrainHeight = terrainName.equals("nether") || terrainName.equals("end")
                 ? Math.max(256, noiseHeight) : noiseHeight;
+        int height = terrainHeight;
+        Integer buildMaxY = buildHeight(world);
+        if (buildMaxY != null) {
+            if (buildMaxY < minY) {
+                throw invalid(world, BUILD_MAX_Y, "la altura debe ser igual o mayor que el mínimo del mundo, Y" + minY);
+            }
+            int blocksNeeded = buildMaxY - minY + 1;
+            height = Math.max(height, (blocksNeeded + 15) / 16 * 16);
+        }
         if ((long) minY + height > 2032) {
             throw invalid(world, "noise-settings.noise", "la altura de la dimensión supera el límite de Minecraft");
         }
         dimensionType.addProperty("has_ceiling", terrainName.equals("nether") || terrainName.equals("caves"));
-        dimensionType.addProperty("logical_height", Math.min(rules.get("logical_height").getAsInt(), height));
+        dimensionType.addProperty("logical_height", Math.min(rules.get("logical_height").getAsInt(), terrainHeight));
         applyOverrides(dimensionType, world.getConfigurationSection("dimension-type"));
         dimensionType.addProperty("min_y", minY);
         dimensionType.addProperty("height", height);
@@ -157,7 +167,15 @@ public final class Worldgen {
         var reservedIds = new LinkedHashSet<String>();
         writeStructures(data, namespace, config.getConfigurationSection("structures"), biomeIds,
                 runtimeGroups, giantIds, nativeTrees, reservedIds);
-        RuntimePlacements.export(packRoot, namespace, config, biomeIds, runtimeGroups, giantIds, nativeTrees, reservedIds, registries);
+        RuntimePlacements.export(packRoot, namespace, config, biomeIds, runtimeGroups, giantIds, nativeTrees,
+                reservedIds, buildMaxY, registries);
+    }
+
+    static Integer buildHeight(ConfigurationSection world) {
+        if (!world.contains(BUILD_MAX_Y)) {
+            return null;
+        }
+        return integer(world, BUILD_MAX_Y, 0, -2032, 2031);
     }
 
     private static String biomeBase(ConfigurationSection biome, String terrain) {

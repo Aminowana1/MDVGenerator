@@ -1,5 +1,6 @@
 package dev.mira.worldgen;
 
+import org.bukkit.World;
 import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
@@ -56,7 +57,12 @@ public final class MDVDimensions extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(this, this);
         getServer().getPluginManager().registerEvents(new NativeGround(), this);
         getServer().getPluginManager().registerEvents(placements, this);
+        getServer().getPluginManager().registerEvents(new BuildHeightLimits(placements::buildHeight), this);
         getServer().getWorlds().forEach(placements::attach);
+    }
+
+    int buildHeight(World world) {
+        return placements.buildHeight(world);
     }
 
     @EventHandler

@@ -59,7 +59,7 @@ final class RuntimePlacements implements Listener {
 
     static void export(Path root, String namespace, ConfigurationSection config, List<String> biomeIds,
                        Set<String> runtimeGroups, Set<String> giantStructureIds, Set<String> nativeTreeIds,
-                       Set<String> reservedIds, ExportRegistries registries) throws IOException {
+                       Set<String> reservedIds, Integer buildMaxY, ExportRegistries registries) throws IOException {
         var entries = new ArrayList<Entry>();
         ConfigurationSection structures = config.getConfigurationSection("structures");
         if (structures != null) {
@@ -83,10 +83,12 @@ final class RuntimePlacements implements Listener {
                 }
             }
         }
-        if (!entries.isEmpty() || !reservedIds.isEmpty() || (!giantStructureIds.isEmpty() && !nativeTreeIds.isEmpty())) {
+        if (buildMaxY != null || !entries.isEmpty() || !reservedIds.isEmpty()
+                || (!giantStructureIds.isEmpty() && !nativeTreeIds.isEmpty())) {
             Path file = root.resolve(MANIFEST);
             Files.createDirectories(file.getParent());
-            Files.writeString(file, JSON.toJson(new Manifest(1, namespace, entries, giantStructureIds, nativeTreeIds, reservedIds)),
+            Files.writeString(file, JSON.toJson(new Manifest(1, namespace, entries, giantStructureIds, nativeTreeIds,
+                    reservedIds, buildMaxY)),
                     StandardCharsets.UTF_8);
         }
     }
@@ -252,6 +254,16 @@ final class RuntimePlacements implements Listener {
         activePacks = null;
     }
 
+    int buildHeight(World world) {
+        if (activePacks != null && world.getKey().getKey().equals("world")) {
+            LoadedPack pack = activePacks.get(world.getKey().getNamespace());
+            if (pack != null && pack.buildMaxY() != null) {
+                return pack.buildMaxY();
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
     private Map<String, LoadedPack> snapshot(World main) {
         Path datapacks = main.getWorldFolder().toPath().resolve("datapacks");
         Map<String, LoadedPack> snapshot = new HashMap<>();
@@ -265,7 +277,8 @@ final class RuntimePlacements implements Listener {
             try {
                 Worldgen.validateId(namespace);
                 LoadedPack loaded = loadPack(datapacks.resolve(filename), namespace);
-                if (!loaded.entries().isEmpty() || !loaded.nativeTreeIds().isEmpty() || !loaded.reservedIds().isEmpty()) {
+                if (loaded.buildMaxY() != null || !loaded.entries().isEmpty()
+                        || !loaded.nativeTreeIds().isEmpty() || !loaded.reservedIds().isEmpty()) {
                     snapshot.put(namespace, loaded);
                 }
             } catch (IOException | RuntimeException ex) {
@@ -294,12 +307,16 @@ final class RuntimePlacements implements Listener {
         Manifest manifest;
         try (InputStream input = pack.open(MANIFEST)) {
             if (input == null) {
-                return new LoadedPack(List.of(), NativeFootprints.empty(), Set.of(), Set.of(), Set.of());
+                return new LoadedPack(List.of(), NativeFootprints.empty(), Set.of(), Set.of(), Set.of(), null);
             }
             manifest = JSON.fromJson(new InputStreamReader(input, StandardCharsets.UTF_8), Manifest.class);
         }
         if (manifest == null || manifest.version() != 1 || !namespace.equals(manifest.namespace())) {
             throw new IOException("Manifiesto de generación incompatible");
+        }
+        Integer buildMaxY = manifest.buildMaxY();
+        if (buildMaxY != null && (buildMaxY < -2032 || buildMaxY > 2031)) {
+            throw new IOException("Altura límite de construcción inválida");
         }
         var loaded = new ArrayList<LoadedEntry>();
         var templates = new HashMap<TemplateKey, Structure>();
@@ -332,7 +349,7 @@ final class RuntimePlacements implements Listener {
         Set<String> reservedIds = manifest.reservedIds() == null ? Set.of() : Set.copyOf(manifest.reservedIds());
         NativeFootprints footprints = giantIds.isEmpty() || loaded.stream().noneMatch(entry -> entry.settings().tree())
                 ? NativeFootprints.empty() : NativeFootprints.load(giantIds);
-        return new LoadedPack(List.copyOf(loaded), footprints, giantIds, treeIds, reservedIds);
+        return new LoadedPack(List.copyOf(loaded), footprints, giantIds, treeIds, reservedIds, buildMaxY);
     }
 
     private static void validateEntry(Entry entry) throws IOException {
@@ -356,7 +373,7 @@ final class RuntimePlacements implements Listener {
     }
 
     private record Manifest(int version, String namespace, List<Entry> entries, Set<String> giantStructureIds,
-                            Set<String> nativeTreeIds, Set<String> reservedIds) {}
+                            Set<String> nativeTreeIds, Set<String> reservedIds, Integer buildMaxY) {}
     private record Entry(String id, List<String> biomes, List<Variant> variants, HeightRules heights, Grid grid,
                          int salt, int attempts, int offset, boolean ignoreAir, boolean entities, List<String> substrate,
                          boolean tree) {}
@@ -368,7 +385,7 @@ final class RuntimePlacements implements Listener {
     private record LoadedVariant(Structure template, int weight) {}
     private record LoadedEntry(Entry settings, List<LoadedVariant> variants, Set<String> biomes, Set<String> substrate) {}
     private record LoadedPack(List<LoadedEntry> entries, NativeFootprints footprints, Set<String> giantIds,
-                              Set<String> nativeTreeIds, Set<String> reservedIds) {}
+                              Set<String> nativeTreeIds, Set<String> reservedIds, Integer buildMaxY) {}
 
     private static final class Populator extends BlockPopulator {
         private volatile List<LoadedEntry> entries;

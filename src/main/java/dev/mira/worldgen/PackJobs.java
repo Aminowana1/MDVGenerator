@@ -37,22 +37,18 @@ final class PackJobs {
     }
 
     void submit(CommandSender sender, String project, Operation operation) {
-        Path datapacks = null;
-        if (operation == Operation.INSTALAR) {
-            var worlds = plugin.getServer().getWorlds();
-            if (worlds.isEmpty()) {
-                throw new IllegalArgumentException("Esperá a que cargue el mundo principal.");
-            }
-            datapacks = worlds.getFirst().getWorldFolder().toPath().resolve("datapacks");
+        var worlds = plugin.getServer().getWorlds();
+        if (operation == Operation.INSTALAR && worlds.isEmpty()) {
+            throw new IllegalArgumentException("Esperá a que cargue el mundo principal.");
         }
+        Path datapacks = worlds.isEmpty() ? null : worlds.getFirst().getWorldFolder().toPath().resolve("datapacks");
         Path source = projects.beginPackOperation(project);
         try {
             if (exporter == null) {
                 exporter = new Worldgen(ExportRegistries.snapshot());
             }
-            Path destination = datapacks;
             Worldgen currentExporter = exporter;
-            worker.execute(() -> prepare(sender, project, source, operation, destination, currentExporter));
+            worker.execute(() -> prepare(sender, project, source, operation, datapacks, currentExporter));
         } catch (RejectedExecutionException ex) {
             projects.finishPackOperation(project);
             throw new IllegalArgumentException("El servidor está cerrando. Volvé a intentar cuando arranque.", ex);
@@ -73,7 +69,7 @@ final class PackJobs {
                     projects.validate(project, source, currentExporter);
                     yield null;
                 }
-                case EXPORTAR -> projects.export(project, source, currentExporter);
+                case EXPORTAR -> projects.export(project, source, datapacks, currentExporter);
                 case INSTALAR -> projects.install(project, source, datapacks, currentExporter);
             };
         } catch (IOException | RuntimeException | LinkageError ex) {

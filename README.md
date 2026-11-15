@@ -17,7 +17,7 @@ El JAR queda en `target/MDVDimensions-2.2.2-necrosfera.1.jar`. Copialo a `plugin
 ### Si ya usabas MDVGenerator o GeneraMundos
 
 1. Apagá el servidor y hacé una copia de seguridad.
-2. Retirá los JAR de las versiones anteriores de `plugins/` y poné `MDVDimensions-2.2.2-necrosfera.1.jar`. Conservá las carpetas `plugins/MDVGenerator/` y `plugins/GeneraMundos/` que existan.
+2. Retirá los JAR de las versiones anteriores de `plugins/` y poné `MDVDimensions-2.2.2-necrosfera.2.jar`. Si instalaste `LimiteAltura-Necrosfera-1.0.0.jar`, retiralo también. Conservá las carpetas `plugins/MDVGenerator/` y `plugins/GeneraMundos/` que existan.
 3. Arrancá el servidor. El plugin copia los proyectos con su `generacion.yml` y sus plantillas NBT a `plugins/MDVDimensions/proyectos/`. Busca primero en MDVGenerator y después en GeneraMundos. Si un proyecto ya existe en la carpeta nueva, conserva esa copia. Las exportaciones y copias de seguridad anteriores quedan en sus carpetas originales.
 4. Abrí `/dim` y elegí el proyecto importado. Su dimensión sigue siendo `gm_<proyecto>:world` y el ZIP conserva el nombre `gm_<proyecto>.zip`. Los datapacks instalados siguen activos. Si migrás desde GeneraMundos y querés que una nueva exportación conserve los mobs que heredabas del bioma vanilla, habilitá **Mobs heredados** en ese bioma.
 
@@ -140,9 +140,17 @@ En **Catálogo → Crear vegetación**, elegí **Bloque vanilla** o **Plantilla 
 2. Hacé una copia del mundo y del datapack instalado. Elegí **Validar → Instalar datapack**. El plugin reemplaza el ZIP del proyecto y archiva la versión instalada anterior en `plugins/MDVDimensions/copias/<proyecto>/`.
 3. Reiniciá el servidor por completo. Entrá al mismo mundo y explorá una zona que nunca se haya generado. Los cambios de colocación y terreno se ven en **chunks nuevos**. Los chunks ya generados, incluso los descargados o pregenerados, mantienen los bloques y las estructuras que tenían. Ajustes de registro como el color de un bioma pueden cambiar cómo se ve un chunk anterior.
 
-Si el servidor tiene abierto el ZIP y no permite reemplazarlo, apagalo y copiá `plugins/MDVDimensions/exportaciones/gm_<proyecto>.zip` a `datapacks/` dentro del mundo principal. Guardá una copia del ZIP anterior antes de reemplazarlo. Conservá el nombre del archivo, los IDs de biomas y los límites verticales. Si restaurás una versión después de generar chunks con biomas nuevos, recuperá juntos el ZIP y el mundo de la misma copia.
+Si el servidor tiene abierto el ZIP y no permite reemplazarlo, apagalo y copiá `plugins/MDVDimensions/exportaciones/gm_<proyecto>.zip` a `datapacks/` dentro del mundo principal. Guardá una copia del ZIP anterior antes de reemplazarlo. Conservá el nombre del archivo, los IDs de biomas y la altura mínima del mundo. Si restaurás una versión después de generar chunks con biomas nuevos, recuperá juntos el ZIP y el mundo de la misma copia.
 
-Los cambios de relieve pueden dejar bordes visibles entre terreno viejo y nuevo. La instalación rechaza actualizaciones que eliminan un ID de bioma o cambian los límites verticales (`min_y` o `height`). Para esos cambios, creá otro proyecto. Mantené instalado el datapack mientras exista el mundo que usa sus registros. [Dependencia entre mundos y datapacks de generación](https://mvplugins.org/core/reference/faq/)
+Los cambios de relieve pueden dejar bordes visibles entre terreno viejo y nuevo. La instalación rechaza actualizaciones que eliminan un ID de bioma o cambian la altura mínima (`min_y`). Para esos cambios, creá otro proyecto. Mantené instalado el datapack mientras exista el mundo que usa sus registros. [Dependencia entre mundos y datapacks de generación](https://mvplugins.org/core/reference/faq/)
+
+## Altura máxima de construcción
+
+Abrí **/dim → tu proyecto → Mundo → Altura máxima de construcción** e ingresá la última Y permitida, por ejemplo `450`. Validá, instalá el datapack y reiniciá el servidor. Podés quitar este tope escribiendo `desactivar` y volviendo a instalar el datapack. El valor en `generacion.yml` se guarda en `world.build-max-y`.
+
+El tope se aplica a la colocación de bloques, al vaciado de cubos y a `/dim pegar` en la dimensión de ese proyecto. Los comandos vanilla y las herramientas de otros plugins se rigen por los límites que ellos manejen.
+
+Si el valor queda por encima de la altura física del mundo, el datapack amplía esa altura al múltiplo de 16 que necesita Minecraft. Por ejemplo, con un mínimo de Y0, el mundo admite técnicamente hasta Y463 y MDVDimensions permite construir hasta Y450. El volumen de generación del terreno se configura aparte. Al bajar o quitar el tope, la exportación conserva la altura física del ZIP instalado para mantener accesibles los bloques existentes.
 
 Para tener otra generación, volvé a **Proyectos → Crear proyecto**. Cada proyecto se exporta a su propio ZIP y crea una dimensión distinta. Desde el catálogo podés copiar una plantilla a otro proyecto y elegir su bioma de destino.
 
